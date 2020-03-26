@@ -55,6 +55,7 @@ impl VirtioBlockDisk {
 	}
 
 	pub fn load(&self, address: u64) -> u8 {
+		println!("Disk Load AD:{:X}", address);
 		match address {
 			0x10001000 => 0x76, // vertio disk magic value: 0x74726976
 			0x10001001 => 0x69,
@@ -72,6 +73,7 @@ impl VirtioBlockDisk {
 	}
 	
 	pub fn store(&mut self, address: u64, value: u8) {
+		println!("Disk Store AD:{:X} VAL:{:X}", address, value);
 		match address {
 			0x10001020 => {
 				self.driver_features = (self.driver_features & !0xff) | (value as u32);

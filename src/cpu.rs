@@ -22,6 +22,7 @@ const CSR_SCAUSE_ADDRESS: u16 = 0x142;
 const CSR_STVAL_ADDRESS: u16 = 0x143;
 const CSR_SATP_ADDRESS: u16 = 0x180;
 const CSR_MSTATUS_ADDRESS: u16 = 0x300;
+const CSR_MISA_ADDRESS: u16 = 0x301;
 const CSR_MEDELEG_ADDRESS: u16 = 0x302;
 const CSR_MIDELEG_ADDRESS: u16 = 0x303;
 const _CSR_MIE_ADDRESS: u16 = 0x304;
@@ -43,7 +44,8 @@ pub struct Cpu {
 	x: [i64; 32],
 	pc: u64,
 	csr: [u64; CSR_CAPACITY],
-	mmu: Mmu
+	mmu: Mmu,
+	dump_flag: bool
 }
 
 #[derive(Clone)]
@@ -99,7 +101,12 @@ enum Instruction {
 	ADDI,
 	ADDIW,
 	ADDW,
+	AMOADDD,
 	AMOADDW,
+	AMOANDD,
+	AMOORD,
+	AMOORW,
+	AMOSWAPD,
 	AMOSWAPW,
 	AND,
 	ANDI,
@@ -129,6 +136,8 @@ enum Instruction {
 	LD,
 	LH,
 	LHU,
+	LRD,
+	LRW,
 	LUI,
 	LW,
 	LWU,
@@ -145,6 +154,8 @@ enum Instruction {
 	REMUW,
 	REMW,
 	SB,
+	SCD,
+	SCW,
 	SD,
 	SFENCEVMA,
 	SH,
@@ -284,7 +295,12 @@ fn get_instruction_name(instruction: &Instruction) -> &'static str {
 		Instruction::ADDI => "ADDI",
 		Instruction::ADDIW => "ADDIW",
 		Instruction::ADDW => "ADDW",
+		Instruction::AMOADDD => "AMOADDD",
 		Instruction::AMOADDW => "AMOADD.W",
+		Instruction::AMOANDD => "AMOAND.D",
+		Instruction::AMOORD => "AMOOR.D",
+		Instruction::AMOORW => "AMOOR.W",
+		Instruction::AMOSWAPD => "AMOSWAP.D",
 		Instruction::AMOSWAPW => "AMOSWAP.W",
 		Instruction::AND => "AND",
 		Instruction::ANDI => "ANDI",
@@ -314,6 +330,8 @@ fn get_instruction_name(instruction: &Instruction) -> &'static str {
 		Instruction::LD => "LD",
 		Instruction::LH => "LH",
 		Instruction::LHU => "LHU",
+		Instruction::LRD => "LR.D",
+		Instruction::LRW => "LR.W",
 		Instruction::LUI => "LUI",
 		Instruction::LW => "LW",
 		Instruction::LWU => "LWU",
@@ -330,6 +348,8 @@ fn get_instruction_name(instruction: &Instruction) -> &'static str {
 		Instruction::REMUW => "REMUW",
 		Instruction::REMW => "REMW",
 		Instruction::SB => "SB",
+		Instruction::SCD => "SC.D",
+		Instruction::SCW => "SC.W",
 		Instruction::SD => "SD",
 		Instruction::SFENCEVMA => "SFENCE_VMA",
 		Instruction::SH => "SH",
@@ -398,7 +418,12 @@ fn get_instruction_format(instruction: &Instruction) -> InstructionFormat {
 		Instruction::FENCE => InstructionFormat::O,
 		Instruction::ADD |
 		Instruction::ADDW |
+		Instruction::AMOADDD |
 		Instruction::AMOADDW |
+		Instruction::AMOANDD |
+		Instruction::AMOORD |
+		Instruction::AMOORW |
+		Instruction::AMOSWAPD |
 		Instruction::AMOSWAPW |
 		Instruction::AND |
 		Instruction::DIV |
@@ -406,6 +431,8 @@ fn get_instruction_format(instruction: &Instruction) -> InstructionFormat {
 		Instruction::DIVUW |
 		Instruction::DIVW |
 		Instruction::ECALL |
+		Instruction::LRD |
+		Instruction::LRW |
 		Instruction::MRET |
 		Instruction::MUL |
 		Instruction::MULH |
@@ -417,6 +444,8 @@ fn get_instruction_format(instruction: &Instruction) -> InstructionFormat {
 		Instruction::REMU |
 		Instruction::REMUW |
 		Instruction::REMW |
+		Instruction::SCD |
+		Instruction::SCW |
 		Instruction::SUB |
 		Instruction::SUBW |
 		Instruction::SFENCEVMA |
@@ -449,9 +478,12 @@ impl Cpu {
 			x: [0; 32],
 			pc: 0,
 			csr: [0; CSR_CAPACITY],
-			mmu: Mmu::new(Xlen::Bit64, terminal)
+			mmu: Mmu::new(Xlen::Bit64, terminal),
+			dump_flag: false
 		};
-		cpu.csr[CSR_SSTATUS_ADDRESS as usize] = 0x200000000;
+		cpu.x[0xb] = 0x1020; // For Linux boot
+		cpu.write_csr_raw(CSR_SSTATUS_ADDRESS, 0x200000005);
+		cpu.write_csr_raw(CSR_MISA_ADDRESS, 0x80043100);
 		cpu
 	}
 
@@ -459,6 +491,10 @@ impl Cpu {
 
 	pub fn store_raw(&mut self, address: u64, value: u8) {
 		self.mmu.store_raw(address, value);
+	}
+
+	pub fn store_doubleword_raw(&mut self, address: u64, value: u64) {
+		self.mmu.store_doubleword_raw(address, value);
 	}
 
 	pub fn update_pc(&mut self, value: u64) {
@@ -478,10 +514,18 @@ impl Cpu {
 		self.mmu.init_disk(data);
 	}
 
-	// One public methods for running riscv-tests
+	pub fn setup_dtb(&mut self, data: Vec<u8>) {
+		self.mmu.init_dtb(data);
+	}
+
+	// Two public methods for running riscv-tests
 
 	pub fn load_word_raw(&mut self, address: u64) -> u32 {
 		self.mmu.load_word_raw(address)
+	}
+
+	pub fn load_doubleword_raw(&mut self, address: u64) -> u64 {
+		self.mmu.load_doubleword_raw(address)
 	}
 
 	//
@@ -498,6 +542,13 @@ impl Cpu {
 
 	// @TODO: Rename
 	fn tick_operate(&mut self) -> Result<(), Trap> {
+		if self.pc == 0xffffffff80001f18 {
+			self.dump_flag = true;
+		}
+		if self.dump_flag {
+			//println!("SSTATUS:{:X} S4:{:X} SP:{:X}", self.csr[CSR_SSTATUS_ADDRESS as usize], self.x[20], self.x[2]);
+			//self.dump_current_instruction_to_terminal();
+		}
 		let word = match self.fetch() {
 			Ok(word) => word,
 			Err(e) => return Err(e)
@@ -634,6 +685,8 @@ impl Cpu {
 			}
 		}
 
+		// println!("Trap! PrivilegeMode:{}", _get_privilege_mode_name(&self.privilege_mode));
+
 		self.privilege_mode = new_privilege_mode;
 		self.mmu.update_privilege_mode(self.privilege_mode.clone());
 		let csr_epc_address = match self.privilege_mode {
@@ -661,13 +714,18 @@ impl Cpu {
 			PrivilegeMode::Reserved => panic!()
 		};
 
-		self.csr[csr_epc_address as usize] = match is_interrupt {
+		// println!("Trap! PC:{:X} cause:{:X} interrupt:{} PrivilegeMode:{}", self.pc, cause, is_interrupt,
+		// 	_get_privilege_mode_name(&self.privilege_mode));
+
+		self.write_csr_raw(csr_epc_address, match is_interrupt {
 			true => self.pc, // @TODO: remove this hack
 			false => self.pc.wrapping_sub(4)
-		};
-		self.csr[csr_cause_address as usize] = cause;
-		self.csr[csr_tval_address as usize] = trap.value;
+		});
+		self.write_csr_raw(csr_cause_address, cause);
+		self.write_csr_raw(csr_tval_address, trap.value);
 		self.pc = self.csr[csr_tvec_address as usize];
+
+		// println!("PC: {:X}", self.pc);
 
 		match self.privilege_mode {
 			PrivilegeMode::Machine => {
@@ -675,14 +733,14 @@ impl Cpu {
 				let mie = (status >> 3) & 1;
 				// clear MIE[3], override MPIE[7] with MIE[3], override MPP[12:11] with current privilege encoding
 				let new_status = (status & !0x1888) | (mie << 7) | (current_privilege_encoding << 11);
-				self.csr[CSR_MSTATUS_ADDRESS as usize] = new_status;
+				self.write_csr_raw(CSR_MSTATUS_ADDRESS, new_status);
 			},
 			PrivilegeMode::Supervisor => {
 				let status = self.csr[CSR_SSTATUS_ADDRESS as usize];
 				let sie = (status >> 1) & 1;
 				// clear SIE[1], override SPIE[5] with SIE[1], override SPP[8] with current privilege encoding
 				let new_status = (status & !0x122) | (sie << 5) | ((current_privilege_encoding & 1) << 8);
-				self.csr[CSR_SSTATUS_ADDRESS as usize] = new_status;
+				self.write_csr_raw(CSR_SSTATUS_ADDRESS, new_status);
 			},
 			PrivilegeMode::User => {
 				panic!("Not implemenete yet");
@@ -719,8 +777,10 @@ impl Cpu {
 	}
 
 	fn write_csr(&mut self, address: u16, value: u64) -> Result<(), Trap> {
-		// println!("PC:{:X} Privilege mode:{}", self.pc.wrapping_sub(4), _get_privilege_mode_name(&self.privilege_mode));
-		// println!("CSR:{:X} Value:{:X}", address, value);
+		if address == CSR_SSTATUS_ADDRESS {
+			//println!("PC:{:X} Privilege mode:{}", self.pc.wrapping_sub(4), _get_privilege_mode_name(&self.privilege_mode));
+			//println!("CSR:{:X} Value:{:X}", address, value);
+		}
 		match self.has_csr_access_privilege(address) {
 			true => {
 				/*
@@ -730,7 +790,7 @@ impl Cpu {
 					return Err(Exception::IllegalInstruction);
 				}
 				*/
-				self.csr[address as usize] = value;
+				self.write_csr_raw(address, value);
 				if address == CSR_SATP_ADDRESS {
 					self.update_addressing_mode(value);
 				}
@@ -740,6 +800,13 @@ impl Cpu {
 				trap_type: TrapType::IllegalInstruction,
 				value: self.pc.wrapping_sub(4) // @TODO: Is this always correct?
 			})
+		}
+	}
+
+	fn write_csr_raw(&mut self, address: u16, value: u64) {
+		self.csr[address as usize] = value;
+		if address == CSR_SSTATUS_ADDRESS {
+			//println!("Write SSTATUS VAL:{:X} PC:{:X}", value, self.pc);
 		}
 	}
 
@@ -1173,6 +1240,7 @@ impl Cpu {
 								if rs1 != 0 && rs2 != 0 {
 									// C.MV
 									// add rs1, x0, rs2
+									// println!("C.MV RS1:{:X} RS2:{:X}", rs1, rs2);
 									return (rs2 << 20) | (rs1 << 7) | 0x33;
 								}
 								// rs1 == 0 && rs2 != 0 is Hints
@@ -1181,7 +1249,7 @@ impl Cpu {
 							1 => {
 								if rs1 == 0 && rs2 == 0 {
 									// C.EBREAK
-									panic!("C.EBREAK is not supported yet.");
+									panic!("C.EBREAK is not supported yet. PC:{:X}", self.pc);
 								}
 								if rs1 != 0 && rs2 == 0 {
 									// C.JALR
@@ -1259,7 +1327,7 @@ impl Cpu {
 				2 => Instruction::SLTI,
 				3 => Instruction::SLTIU,
 				4 => Instruction::XORI,
-				5 => match funct7 {
+				5 => match funct7 & !1 {
 					0 => Instruction::SRLI,
 					1 => Instruction::SRLI, // temporal workaround for xv6
 					0x20 => Instruction::SRAI,
@@ -1292,6 +1360,20 @@ impl Cpu {
 					match funct7 >> 2 {
 						0 => Instruction::AMOADDW,
 						1 => Instruction::AMOSWAPW,
+						2 => Instruction::LRW,
+						3 => Instruction::SCW,
+						8 => Instruction::AMOORW,
+						_ => return Err(())
+					}
+				},
+				3 => {
+					match funct7 >> 2 {
+						0 => Instruction::AMOADDD,
+						1 => Instruction::AMOSWAPD,
+						2 => Instruction::LRD,
+						3 => Instruction::SCD,
+						8 => Instruction::AMOORD,
+						0xc => Instruction::AMOANDD,
 						_ => return Err(())
 					}
 				},
@@ -1407,14 +1489,16 @@ impl Cpu {
 				let rs2 = (word & 0x01f00000) >> 20; // [24:20]
 				let imm = (
 					match word & 0x80000000 { // imm[31:12] = [31]
-						0x80000000 => 0xfffff800,
+						0x80000000 => 0xfffff000,
 						_ => 0
 					} |
 					((word & 0x00000080) << 4) | // imm[11] = [7]
 					((word & 0x7e000000) >> 20) | // imm[10:5] = [30:25]
 					((word & 0x00000f00) >> 7) // imm[4:1] = [11:8]
 				) as i32 as i64 as u64;
-				// println!("Compare {:X} {:X}", self.x[rs1 as usize], self.x[rs2 as usize]);
+				//if instruction_address == 0xffffffff80060cc6 {
+				//	println!("Compare {:X} {:X} {:X} {:X} {:X}", self.x[rs1 as usize], self.x[rs2 as usize], instruction_address, imm, instruction_address.wrapping_add(imm));
+				//}
 				match instruction {
 					Instruction::BEQ => {
 						if self.sign_extend(self.x[rs1 as usize]) == self.sign_extend(self.x[rs2 as usize]) {
@@ -1466,7 +1550,7 @@ impl Cpu {
 						};
 						let tmp = self.x[rs as usize];
 						self.x[rd as usize] = self.sign_extend(data as i64);
-						self.x[0] = 0; // hard-wired zero
+						//self.x[0] = 0; // hard-wired zero
 						match self.write_csr(csr, (self.x[rd as usize] & !tmp) as u64) {
 							Ok(()) => {},
 							Err(e) => return Err(e)
@@ -1478,20 +1562,23 @@ impl Cpu {
 							Err(e) => return Err(e)
 						};
 						self.x[rd as usize] = self.sign_extend(data as i64);
-						self.x[0] = 0; // hard-wired zero
+						//self.x[0] = 0; // hard-wired zero
 						match self.write_csr(csr, (self.x[rd as usize] as u64) & !(rs as u64)) {
 							Ok(()) => {},
 							Err(e) => return Err(e)
 						};
 					},
 					Instruction::CSRRS => {
-						let data = match self.read_csr(csr) {
+						let mut data = match self.read_csr(csr) {
 							Ok(data) => data,
 							Err(e) => return Err(e)
 						};
 						let tmp = self.x[rs as usize];
+						if csr == CSR_SSTATUS_ADDRESS {
+							//println!("CSRRS SSTATUS:{:X} RS:{:X} RSVAL:{:X}", data, rs, tmp);
+						}
 						self.x[rd as usize] = self.sign_extend(data as i64);
-						self.x[0] = 0; // hard-wired zero
+						//self.x[0] = 0; // hard-wired zero
 						match self.write_csr(csr, self.unsigned_data(self.x[rd as usize] | tmp)) {
 							Ok(()) => {},
 							Err(e) => return Err(e)
@@ -1503,7 +1590,7 @@ impl Cpu {
 							Err(e) => return Err(e)
 						};
 						self.x[rd as usize] = self.sign_extend(data as i64);
-						self.x[0] = 0; // hard-wired zero
+						//self.x[0] = 0; // hard-wired zero
 						match self.write_csr(csr, self.unsigned_data((self.x[rd as usize] as u64 | rs as u64) as i64)) {
 							Ok(()) => {},
 							Err(e) => return Err(e)
@@ -1516,7 +1603,7 @@ impl Cpu {
 						};
 						let tmp = self.x[rs as usize];
 						self.x[rd as usize] = self.sign_extend(data as i64);
-						self.x[0] = 0; // hard-wired zero
+						//self.x[0] = 0; // hard-wired zero
 						match self.write_csr(csr, self.unsigned_data(tmp)) {
 							Ok(()) => {},
 							Err(e) => return Err(e)
@@ -1528,7 +1615,7 @@ impl Cpu {
 							Err(e) => return Err(e)
 						};
 						self.x[rd as usize] = self.sign_extend(data as i64);
-						self.x[0] = 0; // hard-wired zero
+						//self.x[0] = 0; // hard-wired zero
 						match self.write_csr(csr, rs as u64) {
 							Ok(()) => {},
 							Err(e) => return Err(e)
@@ -1597,6 +1684,7 @@ impl Cpu {
 						};
 					},
 					Instruction::LW => {
+						//println!("RS1:{:X} RS1VAL:{:X}", rs1, self.x[rs1 as usize]);
 						self.x[rd as usize] = match self.mmu.load_word(self.x[rs1 as usize].wrapping_add(imm) as u64) {
 							Ok(data) => data as i32 as i64,
 							Err(e) => return Err(e)
@@ -1707,10 +1795,22 @@ impl Cpu {
 				let rs2 = (word >> 20) & 0x1f; // [24:20]
 				match instruction {
 					Instruction::ADD => {
+						// println!("ADD RD:{:X} RS1:{:X} RS2:{:X} RS1VAL:{:X} RS2VAL:{:X}", rd, rs1, rs2, self.x[rs1 as usize], self.x[rs2 as usize]);
 						self.x[rd as usize] = self.sign_extend(self.x[rs1 as usize].wrapping_add(self.x[rs2 as usize]));
 					},
 					Instruction::ADDW => {
 						self.x[rd as usize] = self.x[rs1 as usize].wrapping_add(self.x[rs2 as usize]) as i32 as i64;
+					},
+					Instruction::AMOADDD => {
+						let tmp = match self.mmu.load_doubleword(self.unsigned_data(self.x[rs1 as usize])) {
+							Ok(data) => data,
+							Err(e) => return Err(e)
+						};
+						match self.mmu.store_doubleword(self.unsigned_data(self.x[rs1 as usize]), self.x[rs2 as usize].wrapping_add(tmp as i64) as u64) {
+							Ok(()) => {},
+							Err(e) => return Err(e)
+						};
+						self.x[rd as usize] = tmp as i64;
 					},
 					Instruction::AMOADDW => {
 						let tmp = match self.mmu.load_word(self.unsigned_data(self.x[rs1 as usize])) {
@@ -1722,6 +1822,50 @@ impl Cpu {
 							Err(e) => return Err(e)
 						};
 						self.x[rd as usize] = tmp as i32 as i64;
+					},
+					Instruction::AMOANDD => {
+						let tmp = match self.mmu.load_doubleword(self.unsigned_data(self.x[rs1 as usize])) {
+							Ok(data) => data,
+							Err(e) => return Err(e)
+						};
+						match self.mmu.store_doubleword(self.unsigned_data(self.x[rs1 as usize]), (self.x[rs2 as usize] & (tmp as i64)) as u64) {
+							Ok(()) => {},
+							Err(e) => return Err(e)
+						};
+						self.x[rd as usize] = tmp as i32 as i64;
+					},
+					Instruction::AMOORD => {
+						let tmp = match self.mmu.load_doubleword(self.unsigned_data(self.x[rs1 as usize])) {
+							Ok(data) => data,
+							Err(e) => return Err(e)
+						};
+						match self.mmu.store_doubleword(self.unsigned_data(self.x[rs1 as usize]), (self.x[rs2 as usize] | (tmp as i64)) as u64) {
+							Ok(()) => {},
+							Err(e) => return Err(e)
+						};
+						self.x[rd as usize] = tmp as i64;
+					},
+					Instruction::AMOORW => {
+						let tmp = match self.mmu.load_word(self.unsigned_data(self.x[rs1 as usize])) {
+							Ok(data) => data,
+							Err(e) => return Err(e)
+						};
+						match self.mmu.store_word(self.unsigned_data(self.x[rs1 as usize]), (self.x[rs2 as usize] | tmp as i64) as u32) {
+							Ok(()) => {},
+							Err(e) => return Err(e)
+						};
+						self.x[rd as usize] = tmp as i32 as i64;
+					},
+					Instruction::AMOSWAPD => {
+						let tmp = match self.mmu.load_doubleword(self.unsigned_data(self.x[rs1 as usize])) {
+							Ok(data) => data,
+							Err(e) => return Err(e)
+						};
+						match self.mmu.store_doubleword(self.unsigned_data(self.x[rs1 as usize]), self.x[rs2 as usize] as u64) {
+							Ok(()) => {},
+							Err(e) => return Err(e)
+						};
+						self.x[rd as usize] = tmp as i64;
 					},
 					Instruction::AMOSWAPW => {
 						let tmp = match self.mmu.load_word(self.unsigned_data(self.x[rs1 as usize])) {
@@ -1768,7 +1912,7 @@ impl Cpu {
 							PrivilegeMode::Machine => CSR_MEPC_ADDRESS,
 							PrivilegeMode::Reserved => panic!()
 						};
-						self.csr[csr_epc_address as usize] = instruction_address;
+						self.write_csr_raw(csr_epc_address, instruction_address);
 						let exception_type = match self.privilege_mode {
 							PrivilegeMode::User => TrapType::EnvironmentCallFromUMode,
 							PrivilegeMode::Supervisor => TrapType::EnvironmentCallFromSMode,
@@ -1779,6 +1923,20 @@ impl Cpu {
 							trap_type: exception_type,
 							value: instruction_address
 						});
+					},
+					Instruction::LRD => {
+						// @TODO: Implement properly
+						self.x[rd as usize] = match self.mmu.load_doubleword(self.x[rs1 as usize] as u64) {
+							Ok(data) => data as i64,
+							Err(e) => return Err(e)
+						};
+					},
+					Instruction::LRW => {
+						// @TODO: Implement properly
+						self.x[rd as usize] = match self.mmu.load_word(self.x[rs1 as usize] as u64) {
+							Ok(data) => data as i32 as i64,
+							Err(e) => return Err(e)
+						};
 					},
 					Instruction::MRET |
 					Instruction::SRET |
@@ -1802,7 +1960,7 @@ impl Cpu {
 								let mpp = (status >> 11) & 0x3;
 								// Override MIE[3] with MPIE[7], set MPIE[7] to 1, set MPP[12:11] to 0
 								let new_status = (status & !0x1888) | (mpie << 3) | (1 << 7);
-								self.csr[CSR_MSTATUS_ADDRESS as usize] = new_status;
+								self.write_csr_raw(CSR_MSTATUS_ADDRESS, new_status);
 								self.privilege_mode = match mpp {
 									0 => PrivilegeMode::User,
 									1 => PrivilegeMode::Supervisor,
@@ -1816,7 +1974,7 @@ impl Cpu {
 								let spp = (status >> 8) & 1;
 								// Override SIE[1] with SPIE[5], set SPIE[5] to 1, set SPP[8] to 0
 								let new_status = (status & !0x122) | (spie << 1) | (1 << 5);
-								self.csr[CSR_SSTATUS_ADDRESS as usize] = new_status;
+								self.write_csr_raw(CSR_SSTATUS_ADDRESS, new_status);
 								self.privilege_mode = match spp {
 									0 => PrivilegeMode::User,
 									1 => PrivilegeMode::Supervisor,
@@ -1892,6 +2050,24 @@ impl Cpu {
 							0 => self.x[rs1 as usize],
 							_ => self.sign_extend((self.x[rs1 as usize] as i32).wrapping_rem((self.x[rs2 as usize]) as i32) as i64)
 						};
+					},
+					Instruction::SCD => {
+						// @TODO: Implement properly
+						//println!("SCD RS1:{:X} RS2:{:X} IMM:{:X} RS1VAL:{:X} RS2VAL:{:X}", rs1, rs2, imm, self.x[rs1 as usize], self.x[rs2 as usize]);
+						match self.mmu.store_doubleword(self.x[rs1 as usize] as u64, self.x[rs2 as usize] as u64) {
+							Ok(()) => {},
+							Err(e) => return Err(e)
+						};
+						self.x[rd as usize] = 0;
+					},
+					Instruction::SCW => {
+						// @TODO: Implement properly
+						//println!("SCW RS1:{:X} RS2:{:X} IMM:{:X} RS1VAL:{:X} RS2VAL:{:X}", rs1, rs2, imm, self.x[rs1 as usize], self.x[rs2 as usize]);
+						match self.mmu.store_word(self.x[rs1 as usize] as u64, self.x[rs2 as usize] as u32) {
+							Ok(()) => {},
+							Err(e) => return Err(e)
+						};
+						self.x[rd as usize] = 0;
 					},
 					Instruction::SFENCEVMA => {
 						// @TODO: Implement

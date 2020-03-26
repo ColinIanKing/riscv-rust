@@ -15,6 +15,7 @@ pub struct Mmu {
 	privilege_mode: PrivilegeMode,
 	interrupt: InterruptType,
 	memory: Vec<u8>,
+	dtb: Vec<u8>,
 	disk: VirtioBlockDisk,
 	plic: Plic,
 	clint: Clint,
@@ -34,6 +35,15 @@ enum MemoryAccessType {
 	Write
 }
 
+fn _get_addressing_mode_name(mode: &AddressingMode) -> &'static str {
+	match mode {
+		AddressingMode::None => "None",
+		AddressingMode::SV32 => "SV32",
+		AddressingMode::SV39 => "SV39",
+		AddressingMode::SV48 => "SV48"
+	}
+}
+
 impl Mmu {
 	pub fn new(xlen: Xlen, terminal: Box<dyn Terminal>) -> Self {
 		Mmu {
@@ -44,6 +54,7 @@ impl Mmu {
 			privilege_mode: PrivilegeMode::Machine,
 			interrupt: InterruptType::None,
 			memory: vec![],
+			dtb: vec![],
 			disk: VirtioBlockDisk::new(),
 			plic: Plic::new(),
 			clint: Clint::new(),
@@ -63,6 +74,12 @@ impl Mmu {
 	
 	pub fn init_disk(&mut self, data: Vec<u8>) {
 		self.disk.init(data);
+	}
+
+	pub fn init_dtb(&mut self, data: Vec<u8>) {
+		for i in 0..data.len() {
+			self.dtb.push(data[i]);
+		}
 	}
 
 	pub fn tick(&mut self) {
@@ -103,10 +120,19 @@ impl Mmu {
 	}
 
 	pub fn update_addressing_mode(&mut self, new_addressing_mode: AddressingMode) {
+		// println!("{}", _get_addressing_mode_name(&new_addressing_mode));
 		self.addressing_mode = new_addressing_mode;
 	}
 
 	pub fn update_privilege_mode(&mut self, mode: PrivilegeMode) {
+		/*
+		match mode {
+			PrivilegeMode::Machine => println!("Machine"),
+			PrivilegeMode::Supervisor => println!("Supervisor"),
+			PrivilegeMode::User => println!("User"),
+			PrivilegeMode::Reserved => println!("Reserved")
+		};
+		*/
 		self.privilege_mode = mode;
 	}
 
@@ -289,6 +315,7 @@ impl Mmu {
 		let effective_address = self.get_effective_address(address);
 		// @TODO: Check valid memory map
 		match address {
+			0x00001020..=0x00001453 => self.dtb[address as usize - 0x1020],
 			0x0200bff8..=0x0200bfff => self.clint.load(effective_address) as u8,
 			0x0c201004..=0x0c201007 => self.plic.load(effective_address) as u8,
 			0x10000000..=0x10000005 => self.uart.load(effective_address),
@@ -336,6 +363,9 @@ impl Mmu {
 				self.plic.store(effective_address, value);
 			},
 			0x0c201000..=0x0c201007 => {}, // @TODO: Where to?
+			0x02000000..=0x02000007 => { // Note: it seems 1 is stored
+				//println!("AD:{:X} VAL:{:X}", address, value);
+			}, // @TODO: Where to?
 			0x02004000..=0x02004007 => {
 				self.clint.store(effective_address, value);
 			},
@@ -536,24 +566,22 @@ impl Mmu {
 		let _flags2 = self.load_halfword_raw(desc_address2.wrapping_add(12));
 		let _next2 = self.load_halfword_raw(desc_address2.wrapping_add(14));
 
-		/*
 		println!("Avail AD:{:X}", avail_address);
-		println!("Flag:{:X}", flag);
+		println!("Flag:{:X}", _flag);
 		println!("Offset:{:X}", offset);
 		println!("Index:{:X}", index);
 		println!("addr0:{:X}", addr0);
-		println!("len0:{:X}", len0);
-		println!("flags0:{:X}", flags0);
+		println!("len0:{:X}", _len0);
+		println!("flags0:{:X}", _flags0);
 		println!("next0:{:X}", next0);
 		println!("addr1:{:X}", addr1);
 		println!("len1:{:X}", len1);
 		println!("flags1:{:X}", flags1);
 		println!("next1:{:X}", next1);
-		println!("addr2:{:X}", addr2);
-		println!("len2:{:X}", len2);
-		println!("flags2:{:X}", flags2);
-		println!("next2:{:X}", next2);
-		*/
+		println!("addr2:{:X}", _addr2);
+		println!("len2:{:X}", _len2);
+		println!("flags2:{:X}", _flags2);
+		println!("next2:{:X}", _next2);
 		
 		let _blk_type = self.load_word_raw(addr0);
 		let _blk_reserved = self.load_word_raw(addr0.wrapping_add(4));

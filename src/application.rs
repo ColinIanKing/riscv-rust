@@ -1,6 +1,7 @@
 // @TODO: temporal
 const TEST_MEMORY_CAPACITY: u64 = 1024 * 512;
-const PROGRAM_MEMORY_CAPACITY: u64 = 1024 * 1024 * 128; // big enough to run xv6
+//const PROGRAM_MEMORY_CAPACITY: u64 = 1024 * 1024 * 128; // big enough to run xv6
+const PROGRAM_MEMORY_CAPACITY: u64 = 1024 * 1024 * 1024 * 2; // big enough to run Linux
 
 use cpu::{Cpu, Xlen};
 use terminal::Terminal;
@@ -46,7 +47,15 @@ impl Application {
 
 	pub fn run_program(&mut self) {
 		loop {
+			//self.cpu.dump_current_instruction_to_terminal();
 			self.tick();
+			let fromhost = self.cpu.load_doubleword_raw(0x80008000);
+			let tohost = self.cpu.load_doubleword_raw(0x80008008);
+			if tohost != 0 {
+				self.cpu.store_doubleword_raw(0x80008008, 0);
+				self.cpu.store_doubleword_raw(0x80008000, 0xffffffffffffffff);
+				self.cpu.put_bytes_to_terminal(&[tohost as u8]);
+			}
 		}
 	}
 
@@ -447,6 +456,10 @@ impl Application {
 
 	pub fn setup_filesystem(&mut self, data: Vec<u8>) {
 		self.cpu.setup_filesystem(data);
+	}
+
+	pub fn setup_dtb(&mut self, data: Vec<u8>) {
+		self.cpu.setup_dtb(data);
 	}
 
 	pub fn update_xlen(&mut self, xlen: Xlen) {
