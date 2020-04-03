@@ -39,6 +39,7 @@ pub struct Cpu {
 	clock: u64,
 	xlen: Xlen,
 	privilege_mode: PrivilegeMode,
+	wfi: bool,
 	// using only lower 32bits of x, pc, and csr registers
 	// for 32-bit mode
 	x: [i64; 32],
@@ -180,6 +181,7 @@ enum Instruction {
 	SUBW,
 	SW,
 	URET,
+	WFI,
 	XOR,
 	XORI
 }
@@ -374,6 +376,7 @@ fn get_instruction_name(instruction: &Instruction) -> &'static str {
 		Instruction::SUBW => "SUBW",
 		Instruction::SW => "SW",
 		Instruction::URET => "URET",
+		Instruction::WFI => "WFI",
 		Instruction::XOR => "XOR",
 		Instruction::XORI => "XORI"
 	}
@@ -459,6 +462,7 @@ fn get_instruction_format(instruction: &Instruction) -> InstructionFormat {
 		Instruction::SRL |
 		Instruction::SRLW |
 		Instruction::URET |
+		Instruction::WFI |
 		Instruction::XOR => InstructionFormat::R,
 		Instruction::SB |
 		Instruction::SD |
@@ -475,6 +479,7 @@ impl Cpu {
 			clock: 0,
 			xlen: Xlen::Bit64,
 			privilege_mode: PrivilegeMode::Machine,
+			wfi: false,
 			x: [0; 32],
 			pc: 0,
 			csr: [0; CSR_CAPACITY],
@@ -538,17 +543,137 @@ impl Cpu {
 		self.mmu.tick();
 		self.handle_interrupt();
 		self.clock = self.clock.wrapping_add(1);
+		self.csr[0xc01] = self.csr[0xc01].wrapping_add(1);
 	}
 
 	// @TODO: Rename
 	fn tick_operate(&mut self) -> Result<(), Trap> {
-		if self.pc == 0xffffffff80001f18 {
-			self.dump_flag = true;
+		if self.wfi {
+			//return Ok(()); // ?
 		}
-		if self.dump_flag {
+		/*
+		if self.pc == 0xffffffff8027bf3e {
+			println!("virtnet_poll");
+		}
+		if self.pc == 0xffffffff8023a676 {
+			println!("virtqueue_get_buf");
+		}
+		if self.pc == 0xffffffff8023a55e {
+			println!("virtqueue_get_buf_ctx Compare2 A4:{:X} A5:{:X}", self.x[14], self.x[15]);
+		}
+		if self.pc == 0xffffffff8023a584 {
+			println!("virtqueue_get_buf_ctx Compare A3:{:X} A5:{:X}", self.x[13], self.x[15]);
+		}
+		if self.pc == 0xffffffff8002a38c {
+			println!("handle_exception");
+		}
+		if self.pc == 0xffffffff8039d7a0 {
+			println!("do_IRQ");
+		}
+		if self.pc == 0xffffffff80276364 {
+			println!("virtblk_update_capacity");
+		}
+		if self.pc == 0xffffffff8000d68c {
+			println!("plic_init");
+		}
+		if self.pc == 0xffffffff80215498 {
+			println!("plic_handle_irq");
+		}
+		if self.pc == 0xffffffff802158ce {
+			println!("plic_set_affinity");
+		}
+		if self.pc == 0xffffffff80215618 {
+			println!("plic_irq_unmask");
+		}
+		if self.pc == 0xffffffff8021578c {
+			println!("plic_irq_mask");
+		}
+		if self.pc == 0xffffffff80215448 {
+			println!("plic_irq_eoi");
+		}
+		if self.pc == 0xffffffff8006a64a {
+			println!("generic_handle_irq");
+		}
+		if self.pc == 0xffffffff801eb758 {
+			println!("blk_mq_complete_request");
+		}
+		if self.pc == 0xffffffff801ecba0 {
+			println!("blk_mq_start_stopped_hw_queues");
+		}
+		if self.pc == 0xffffffff8023a3e2 {
+			println!("virtqueue_detach_unused_buf");
+		}
+		if self.pc == 0xffffffff8023a296 {
+			println!("detach_buf_packed");
+		}
+		if self.pc == 0xffffffff8023a172 {
+			println!("detach_buf_split A0:{:X} A1:{:X}", self.x[10], self.x[11]);
+		}
+		if self.pc == 0xffffffff802398d6 {
+			println!("virtqueue_notify");
+		}
+		if self.pc == 0xffffffff8023a0ee {
+			println!("vring_unmap_desc_packed");
+		}
+		if self.pc == 0xffffffff8023ac8a {
+			println!("virtqueue_add");		
+		}
+		if self.pc == 0xffffffff8023b54c {
+			println!("virtqueue_add_sgs");
+		}
+		if self.pc == 0xffffffff801f1a34 {
+			println!("blk_mq_sched_dispatch_requests");
+		}
+		if self.pc == 0xffffffff801ed6aa {
+			println!("blk_mq_dispatch_rq_list");
+		}
+		if self.pc == 0xffffffff8027602e {
+			println!("virtio_queue_rq");
+		}
+		if self.pc == 0xffffffff802761d0 {
+			println!("virtio_queue_rq - virtqueue_kick");		
+		}
+		if self.pc == 0xffffffff80275de2 {
+			println!("virtblk_done");
+		}
+		if self.pc == 0xffffffff80275e70 {
+			println!("virtblk_done ret");
+		}
+		if self.pc == 0xffffffff80239c00 {
+			println!("virtqueue_kick_prepare");
+		}
+		if self.pc == 0xffffffff80239cec {
+			println!("virtqueue_kick");
+		}
+		if self.pc == 0xffffffff80239e90 {
+			println!("virtqueue_enable_cb");
+		}
+		if self.pc == 0xffffffff80239d2c {
+			println!("virtqueue_disable_cb");
+		}
+		if self.pc == 0xffffffff8023a474 {
+			println!("virtqueue_get_buf_ctx");
+		}
+		if self.pc == 0xffffffff8023983c {
+			println!("virtio_break_device");
+		}
+		if self.pc == 0xffffffff8023a88c {
+			println!("vring_create_virtqueue");
+		}
+		if self.pc == 0xffffffff8023982c {
+			println!("virtqueue_is_broken");
+		}
+		if self.pc == 0xffffffff80268358 {
+			println!("dev_err");
+		}
+		if self.pc == 0xffffffff8023b46a {
+			println!("EIO");
+		}
+		if (self.pc >= 0xffffffff80050044 && self.pc <= 0xffffffff80050118) {
 			//println!("SSTATUS:{:X} S4:{:X} SP:{:X}", self.csr[CSR_SSTATUS_ADDRESS as usize], self.x[20], self.x[2]);
 			//self.dump_current_instruction_to_terminal();
 		}
+		*/
 		let word = match self.fetch() {
 			Ok(word) => word,
 			Err(e) => return Err(e)
@@ -587,6 +712,7 @@ impl Cpu {
 					true => {
 						self.mmu.reset_uart_interrupting();
 						self.mmu.reset_interrupt();
+						self.wfi = false;
 					},
 					false => {}
 				};
@@ -599,6 +725,7 @@ impl Cpu {
 					true => {
 						self.mmu.reset_clint_interrupting();
 						self.mmu.reset_interrupt();
+						self.wfi = false;
 					},
 					false => {}
 				};
@@ -612,6 +739,7 @@ impl Cpu {
 						self.mmu.handle_disk_access();
 						self.mmu.reset_disk_interrupting();
 						self.mmu.reset_interrupt();
+						self.wfi = false;
 					},
 					false => {}
 				};
@@ -660,6 +788,7 @@ impl Cpu {
 		let uie = status & 1;
 
 		if is_interrupt {
+			//println!("Interrupt! Cause:{:X}", cause);
 			let interrupt_privilege_mode = get_interrupt_privilege_mode(&trap);
 			let interrupt_privilege_encoding = get_privilege_encoding(&interrupt_privilege_mode) as u64;
 			match new_privilege_mode {
@@ -805,9 +934,7 @@ impl Cpu {
 
 	fn write_csr_raw(&mut self, address: u16, value: u64) {
 		self.csr[address as usize] = value;
-		if address == CSR_SSTATUS_ADDRESS {
-			//println!("Write SSTATUS VAL:{:X} PC:{:X}", value, self.pc);
-		}
+		//println!("Write CSR AD:{:X} VAL:{:X} PC:{:X}", address, value, self.pc);
 	}
 
 	fn update_addressing_mode(&mut self, value: u64) {
@@ -1463,6 +1590,7 @@ impl Cpu {
 							0x00000073 => Instruction::ECALL,
 							0x00200073 => Instruction::URET,
 							0x10200073 => Instruction::SRET,
+							0x10500073 => Instruction::WFI,
 							0x30200073 => Instruction::MRET,
 							_ => return Err(())
 						}
@@ -2107,6 +2235,10 @@ impl Cpu {
 					},
 					Instruction::SRLW => {
 						self.x[rd as usize] = (self.x[rs1 as usize] as u32).wrapping_shr(self.x[rs2 as usize] as u32) as i32 as i64;
+					},
+					Instruction::WFI => {
+						//println!("WFI PC:{:X}", instruction_address);
+						self.wfi = true;
 					},
 					Instruction::XOR => {
 						self.x[rd as usize] = self.sign_extend(self.x[rs1 as usize] ^ self.x[rs2 as usize]);

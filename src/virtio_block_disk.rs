@@ -1,13 +1,17 @@
 pub struct VirtioBlockDisk {
-	id: u8,
+	id: u16,
 	clock: u64,
+	device_features_sel: u32,
+	device_features: u64,
 	driver_features: u32,
 	guest_page_size: u32,
 	queue_select: u32,
 	queue_num: u32,
+	queue_align: u32,
 	queue_pfn: u32,
 	queue_notify: u32,
 	status: u32,
+	interrupt_status: u32,
 	notify_clock: u64,
 	interrupting: bool,
 	contents: Vec<u8>
@@ -18,13 +22,17 @@ impl VirtioBlockDisk {
 		VirtioBlockDisk {
 			id: 0,
 			clock: 0,
+			device_features_sel: 0,
+			device_features: 0,
 			driver_features: 0,
 			guest_page_size: 0,
 			queue_select: 0,
 			queue_num: 0,
+			queue_align: 0,
 			queue_pfn: 0,
 			queue_notify: 0,
 			status: 0,
+			interrupt_status: 0,
 			notify_clock: 0,
 			interrupting: false,
 			contents: vec![]
@@ -39,6 +47,7 @@ impl VirtioBlockDisk {
 	pub fn reset_interrupting(&mut self) {
 		self.interrupting = false;
 		self.notify_clock = 0;
+		//println!("Virtio notify reset");
 	}
 
 	pub fn init(&mut self, contents: Vec<u8>) {
@@ -48,33 +57,81 @@ impl VirtioBlockDisk {
 	}
 
 	pub fn tick(&mut self) {
-		if self.notify_clock > 0 && self.clock > self.notify_clock + 500 {
+		if self.notify_clock > 0 && self.clock > self.notify_clock + 1000 {
 			self.interrupting = true;
+			self.interrupt_status = 1;
 		}
 		self.clock = self.clock.wrapping_add(1);
 	}
 
-	pub fn load(&self, address: u64) -> u8 {
-		println!("Disk Load AD:{:X}", address);
+	pub fn load(&mut self, address: u64) -> u8 {
+		//println!("Disk Load AD:{:X}", address);
+		// Legacy virtio Interface
 		match address {
-			0x10001000 => 0x76, // vertio disk magic value: 0x74726976
+			// Magic number: 0x74726976
+			0x10001000 => 0x76,
 			0x10001001 => 0x69,
 			0x10001002 => 0x72,
 			0x10001003 => 0x74,
-			0x10001004 => 1, // vertio version: 1
-			0x10001008 => 2, // vertio device id: 2
-			0x1000100c => 0x51, // vertio vendor id: 0x554d4551
+			// Device version: 1
+			0x10001004 => 1,
+			// Virtio Subsystem Device id: 2
+			0x10001008 => 2,
+			// Virtio Subsystem Vendor id: 0x554d4551
+			0x1000100c => 0x51,
 			0x1000100d => 0x45,
 			0x1000100e => 0x4d,
 			0x1000100f => 0x55,
-			0x10001034 => 8, // vertio  queue num max: At least 8
+			// Flags representing features the device supports
+			0x10001010 => ((self.device_features >> (self.device_features_sel * 32)) & 0xff) as u8,
+			0x10001011 => (((self.device_features >> (self.device_features_sel * 32)) >> 8) & 0xff) as u8,
+			0x10001012 => (((self.device_features >> (self.device_features_sel * 32)) >> 16) & 0xff) as u8,
+			0x10001013 => (((self.device_features >> (self.device_features_sel * 32)) >> 24) & 0xff) as u8,
+			// Maximum virtual queue size: 8
+			0x10001034 => 8,
+			// Guest physical page number of the virtual queue
+			0x10001040 => (self.queue_pfn & 0xff) as u8,
+			0x10001041 => ((self.queue_pfn >> 8) & 0xff) as u8,
+			0x10001042 => ((self.queue_pfn >> 16) & 0xff) as u8,
+			0x10001043 => ((self.queue_pfn >> 24) & 0xff) as u8,
+			// Interrupt status
+			0x10001060 => (self.interrupt_status & 0xff) as u8,
+			0x10001061 => ((self.interrupt_status >> 8) & 0xff) as u8,
+			0x10001062 => ((self.interrupt_status >> 16) & 0xff) as u8,
+			0x10001063 => ((self.interrupt_status >> 24) & 0xff) as u8,
+			// Device status
+			0x10001070 => (self.status & 0xff) as u8,
+			0x10001071 => ((self.status >> 8) & 0xff) as u8,
+			0x10001072 => ((self.status >> 16) & 0xff) as u8,
+			0x10001073 => ((self.status >> 24) & 0xff) as u8,
+			// Configurations @TODO: Implement properly
+			0x10001100 => 0x00,
+			0x10001101 => 0x20,
+			0x10001102 => 0x03,
+			0x10001103 => 0,
+			0x10001104 => 0,
+			0x10001105 => 0,
+			0x10001106 => 0,
+			0x10001107 => 0,
 			_ => 0
 		}
 	}
-	
+
 	pub fn store(&mut self, address: u64, value: u8) {
-		println!("Disk Store AD:{:X} VAL:{:X}", address, value);
+		//println!("Disk Store AD:{:X} VAL:{:X}", address, value);
 		match address {
+			0x10001014 => {
+				self.device_features_sel = (self.device_features_sel & !0xff) | (value as u32);
+			},
+			0x10001015 => {
+				self.device_features_sel = (self.device_features_sel & !0xff00) | ((value as u32) << 8);
+			},
+			0x10001016 => {
+				self.device_features_sel = (self.device_features_sel & !0xff0000) | ((value as u32) << 16);			
+			},
+			0x10001017 => {
+				self.device_features_sel = (self.device_features_sel & !0xff000000) | ((value as u32) << 24);
+			},
 			0x10001020 => {
 				self.driver_features = (self.driver_features & !0xff) | (value as u32);
 			},
@@ -123,6 +180,18 @@ impl VirtioBlockDisk {
 			0x1000103b => {
 				self.queue_num = (self.queue_num & !0xff000000) | ((value as u32) << 24);
 			},
+			0x1000103c => {
+				self.queue_align = (self.queue_align & !0xff) | (value as u32);
+			},
+			0x1000103d => {
+				self.queue_align = (self.queue_align & !0xff00) | ((value as u32) << 8);
+			},
+			0x1000103e => {
+				self.queue_align = (self.queue_align & !0xff0000) | ((value as u32) << 16);			
+			},
+			0x1000103f => {
+				self.queue_align = (self.queue_align & !0xff000000) | ((value as u32) << 24);
+			},
 			0x10001040 => {
 				self.queue_pfn = (self.queue_pfn & !0xff) | (value as u32);
 			},
@@ -147,6 +216,19 @@ impl VirtioBlockDisk {
 			0x10001053 => {
 				self.queue_notify = (self.queue_notify & !0xff000000) | ((value as u32) << 24);
 				self.notify_clock = self.clock;
+				//println!("Virtio notify");
+			},
+			0x10001060 => {
+				self.interrupt_status = (self.interrupt_status & !0xff) | (value as u32);
+			},
+			0x10001061 => {
+				self.interrupt_status = (self.interrupt_status & !0xff00) | ((value as u32) << 8);
+			},
+			0x10001062 => {
+				self.interrupt_status = (self.interrupt_status & !0xff0000) | ((value as u32) << 16);			
+			},
+			0x10001063 => {
+				self.interrupt_status = (self.interrupt_status & !0xff000000) | ((value as u32) << 24);
 			},
 			0x10001070 => {
 				self.status = (self.status & !0xff) | (value as u32);
@@ -192,8 +274,8 @@ impl VirtioBlockDisk {
 		self.contents[address as usize] = value
 	}
 
-	pub fn get_new_id(&mut self) -> u8 {
-		self.id += 1;
+	pub fn get_new_id(&mut self) -> u16 {
+		self.id = self.id.wrapping_add(1);
 		self.id
 	}
 }
