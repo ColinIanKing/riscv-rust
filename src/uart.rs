@@ -7,6 +7,8 @@ pub struct Uart {
 	interrupt_enable_register: u8,
 	interrupt_identification_register: u8,
 	line_control_register: u8,
+	modem_control_register: u8,
+	scratch_register: u8,
 	interrupting: bool,
 	terminal: Box<dyn Terminal>
 }
@@ -20,6 +22,8 @@ impl Uart {
 			interrupt_enable_register: 0,
 			interrupt_identification_register: 0xf,
 			line_control_register: 0,
+			modem_control_register: 0,
+			scratch_register: 0,
 			interrupting: false,
 			terminal: terminal
 		}
@@ -78,10 +82,12 @@ impl Uart {
 				false => 0 // @TODO: Implement properly
 			},
 			0x10000003 => self.line_control_register,
+			0x10000003 => self.modem_control_register,
 			0x10000005 => match (self.line_control_register >> 7) == 0 {
 				true => self.line_status_register, // UART0 LSR
 				false => 0 // @TODO: Implement properly
 			},
+			0x10000007 => self.scratch_register,
 			_ => 0
 		}
 	}
@@ -110,6 +116,12 @@ impl Uart {
 			},
 			0x10000003 => {
 				self.line_control_register = value;
+			},
+			0x10000004 => {
+				self.modem_control_register = value;
+			},
+			0x10000007 => {
+				self.scratch_register = value;
 			},
 			_ => {}
 		};
