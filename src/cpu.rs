@@ -1,3 +1,6 @@
+use std::str;
+use std::io::{stdout, Write};
+
 use mmu::{AddressingMode, Mmu};
 use plic::InterruptType;
 use terminal::Terminal;
@@ -5,7 +8,7 @@ use terminal::Terminal;
 const CSR_CAPACITY: usize = 4096;
 
 const CSR_USTATUS_ADDRESS: u16 = 0x000;
-const _CSR_UIR_ADDRESS: u16 = 0x004;
+const CSR_UIE_ADDRESS: u16 = 0x004;
 const CSR_UTVEC_ADDRESS: u16 = 0x005;
 const _CSR_USCRATCH_ADDRESS: u16 = 0x040;
 const CSR_UEPC_ADDRESS: u16 = 0x041;
@@ -15,28 +18,32 @@ const _CSR_UIP_ADDRESS: u16 = 0x044;
 const CSR_SSTATUS_ADDRESS: u16 = 0x100;
 const CSR_SEDELEG_ADDRESS: u16 = 0x102;
 const CSR_SIDELEG_ADDRESS: u16 = 0x103;
+const CSR_SIE_ADDRESS: u16 = 0x104;
 const CSR_STVEC_ADDRESS: u16 = 0x105;
 const _CSR_SSCRATCH_ADDRESS: u16 = 0x140;
 const CSR_SEPC_ADDRESS: u16 = 0x141;
 const CSR_SCAUSE_ADDRESS: u16 = 0x142;
 const CSR_STVAL_ADDRESS: u16 = 0x143;
+const CSR_SIP_ADDRESS: u16 = 0x144;
 const CSR_SATP_ADDRESS: u16 = 0x180;
 const CSR_MSTATUS_ADDRESS: u16 = 0x300;
 const CSR_MISA_ADDRESS: u16 = 0x301;
 const CSR_MEDELEG_ADDRESS: u16 = 0x302;
 const CSR_MIDELEG_ADDRESS: u16 = 0x303;
-const _CSR_MIE_ADDRESS: u16 = 0x304;
+const CSR_MIE_ADDRESS: u16 = 0x304;
 const CSR_MTVEC_ADDRESS: u16 = 0x305;
 const _CSR_MSCRATCH_ADDRESS: u16 = 0x340;
 const CSR_MEPC_ADDRESS: u16 = 0x341;
 const CSR_MCAUSE_ADDRESS: u16 = 0x342;
 const CSR_MTVAL_ADDRESS: u16 = 0x343;
+const CSR_MIP_ADDRESS: u16 = 0x344;
 const _CSR_PMPCFG0_ADDRESS: u16 = 0x3a0;
 const _CSR_PMPADDR0_ADDRESS: u16 = 0x3b0;
-const _CSR_MHARTID_ADDRESS: u16 = 0xf14;
+const CSR_MCYCLE_ADDRESS: u16 = 0xb00;
 const CSR_CYCLE_ADDRESS: u16 = 0xc00;
 const CSR_TIME_ADDRESS: u16 = 0xc01;
 const CSR_INSERT_ADDRESS: u16 = 0xc02;
+const _CSR_MHARTID_ADDRESS: u16 = 0xf14;
 
 pub struct Cpu {
 	clock: u64,
@@ -109,6 +116,8 @@ enum Instruction {
 	AMOADDD,
 	AMOADDW,
 	AMOANDD,
+	AMOANDW,
+	AMOMAXUW,
 	AMOORD,
 	AMOORW,
 	AMOSWAPD,
@@ -132,15 +141,18 @@ enum Instruction {
 	DIVU,
 	DIVUW,
 	DIVW,
+	EBREAK,
 	ECALL,
 	FADDD,
 	FCVTDL,
 	FCVTDW,
+	FCVTDWU,
 	FCVTDS,
 	FCVTSD,
 	FCVTWD,
 	FDIVD,
 	FENCE,
+	FEQD,
 	FLD,
 	FLED,
 	FLTD,
@@ -148,10 +160,12 @@ enum Instruction {
 	FLW,
 	FMADDD,
 	FMVDX,
+	FMVXD,
 	FMVXW,
 	FMVWX,
 	FNMSUBD,
 	FSD,
+	FSW,
 	FSGNJD,
 	FSGNJXD,
 	FSUBD,
@@ -325,6 +339,8 @@ fn get_instruction_name(instruction: &Instruction) -> &'static str {
 		Instruction::AMOADDD => "AMOADDD",
 		Instruction::AMOADDW => "AMOADD.W",
 		Instruction::AMOANDD => "AMOAND.D",
+		Instruction::AMOANDW => "AMOAND.W",
+		Instruction::AMOMAXUW => "AMOMAXU.W",
 		Instruction::AMOORD => "AMOOR.D",
 		Instruction::AMOORW => "AMOOR.W",
 		Instruction::AMOSWAPD => "AMOSWAP.D",
@@ -348,15 +364,18 @@ fn get_instruction_name(instruction: &Instruction) -> &'static str {
 		Instruction::DIVU => "DIVU",
 		Instruction::DIVUW => "DIVUW",
 		Instruction::DIVW => "DIVW",
+		Instruction::EBREAK => "EBREAK",
 		Instruction::ECALL => "ECALL",
 		Instruction::FADDD => "FADD.D",
 		Instruction::FCVTDL => "FCVT.D.L",
 		Instruction::FCVTDS => "FCVT.D.S",
 		Instruction::FCVTDW => "FCVT.D.W",
+		Instruction::FCVTDWU => "FCVT.D.WU",
 		Instruction::FCVTSD => "FCVT.S.D",
 		Instruction::FCVTWD => "FCVT.W.D",
 		Instruction::FDIVD => "FDIV.D",
 		Instruction::FENCE => "FENCE",
+		Instruction::FEQD => "FEQ.D",
 		Instruction::FLD => "FLD",
 		Instruction::FLED => "FLE.D",
 		Instruction::FLTD => "FLT.D",
@@ -364,10 +383,12 @@ fn get_instruction_name(instruction: &Instruction) -> &'static str {
 		Instruction::FMADDD => "FMADD.D",
 		Instruction::FMULD => "FMUL.D",
 		Instruction::FMVDX => "FMV.D.X",
+		Instruction::FMVXD => "FMV.X.D",
 		Instruction::FMVXW => "FMV.X.W",
 		Instruction::FMVWX => "FMV.W.X",
 		Instruction::FNMSUBD => "FNMSUB.D",
 		Instruction::FSD => "FSD",
+		Instruction::FSW => "FSW",
 		Instruction::FSGNJD => "FSGNJD",
 		Instruction::FSGNJXD => "FSGNJXD",
 		Instruction::FSUBD => "FSUBD",
@@ -472,6 +493,8 @@ fn get_instruction_format(instruction: &Instruction) -> InstructionFormat {
 		Instruction::AMOADDD |
 		Instruction::AMOADDW |
 		Instruction::AMOANDD |
+		Instruction::AMOANDW |
+		Instruction::AMOMAXUW |
 		Instruction::AMOORD |
 		Instruction::AMOORW |
 		Instruction::AMOSWAPD |
@@ -482,18 +505,22 @@ fn get_instruction_format(instruction: &Instruction) -> InstructionFormat {
 		Instruction::DIVUW |
 		Instruction::DIVW |
 		Instruction::ECALL |
+		Instruction::EBREAK |
 		Instruction::FADDD |
 		Instruction::FCVTDL |
 		Instruction::FCVTDS |
 		Instruction::FCVTDW |
+		Instruction::FCVTDWU |
 		Instruction::FCVTSD |
 		Instruction::FCVTWD |
 		Instruction::FDIVD |
+		Instruction::FEQD |
 		Instruction::FLED |
 		Instruction::FLTD |
 		Instruction::FMADDD |
 		Instruction::FMULD |
 		Instruction::FMVDX |
+		Instruction::FMVXD |
 		Instruction::FMVXW |
 		Instruction::FMVWX |
 		Instruction::FNMSUBD |
@@ -531,6 +558,7 @@ fn get_instruction_format(instruction: &Instruction) -> InstructionFormat {
 		Instruction::WFI |
 		Instruction::XOR => InstructionFormat::R,
 		Instruction::FSD |
+		Instruction::FSW |
 		Instruction::SB |
 		Instruction::SD |
 		Instruction::SH |
@@ -613,6 +641,7 @@ impl Cpu {
 		self.handle_interrupt(instruction_address);
 		self.clock = self.clock.wrapping_add(1);
 		self.csr[CSR_CYCLE_ADDRESS as usize] = self.csr[CSR_CYCLE_ADDRESS as usize].wrapping_add(1);
+		self.csr[CSR_MCYCLE_ADDRESS as usize] = self.csr[CSR_MCYCLE_ADDRESS as usize].wrapping_add(1);
 		self.csr[CSR_TIME_ADDRESS as usize] = self.csr[CSR_TIME_ADDRESS as usize].wrapping_add(1);
 		self.csr[CSR_INSERT_ADDRESS as usize] = self.csr[CSR_INSERT_ADDRESS as usize].wrapping_add(1);
 	}
@@ -620,135 +649,182 @@ impl Cpu {
 	// @TODO: Rename
 	fn tick_operate(&mut self) -> Result<(), Trap> {
 		if self.wfi {
-			//return Ok(()); // ?
+			//return Ok(());
 		}
 		/*
-		if self.pc == 0xffffffff80261e50 {
-			println!("urandom_read");
+		if self.pc == 0xffffffff8003f82a {
+			println!("do_idle. Clock:{:X}", self.clock);
 		}
-		if self.pc == 0xffffffff8027bf3e {
-			println!("virtnet_poll");
+		if self.pc == 0xffffffff8003f99c {
+			println!("cpu_startup_entry");
 		}
-		if self.pc == 0xffffffff8023a676 {
-			println!("virtqueue_get_buf");
+		if self.pc == 0xffffffff8032f65e {
+			println!("rest_init");
 		}
-		if self.pc == 0xffffffff8023a55e {
-			println!("virtqueue_get_buf_ctx Compare2 A4:{:X} A5:{:X}", self.x[14], self.x[15]);
+		if self.pc == 0xffffffff80331f14 {
+			println!("do_nanosleep");
 		}
-		if self.pc == 0xffffffff8023a584 {
-			println!("virtqueue_get_buf_ctx Compare A3:{:X} A5:{:X}", self.x[13], self.x[15]);
+		if self.pc == 0xffffffff80055df0 {
+			println!("hrtimer_nanosleep");
 		}
-		if self.pc == 0xffffffff8002a38c {
-			println!("handle_exception");
+		if self.pc == 0xffffffff80331fd8 {
+			println!("hrtimer_nanosleep_restart");
 		}
-		if self.pc == 0xffffffff8039d7a0 {
-			println!("do_IRQ");
+		if self.pc == 0xffffffff8005b9d8 {
+			println!("do_cpu_nanosleep");
 		}
-		if self.pc == 0xffffffff80276364 {
-			println!("virtblk_update_capacity");
+		if self.pc == 0xffffffff8005bb28 {
+			println!("posix_cpu_nsleep");
 		}
-		if self.pc == 0xffffffff8000d68c {
-			println!("plic_init");
+		if self.pc == 0xffffffff8005a284 {
+			println!("common_nsleep");
 		}
-		if self.pc == 0xffffffff80215498 {
-			println!("plic_handle_irq");
+		if self.pc == 0xffffffff8005a2cc {
+			println!("common_nsleep_timens");
 		}
-		if self.pc == 0xffffffff802158ce {
-			println!("plic_set_affinity");
+		if self.pc == 0xffffffff8005b01c {
+			println!("__se_sys_clock_nanosleep");
 		}
-		if self.pc == 0xffffffff80215618 {
-			println!("plic_irq_unmask");
+		if self.pc == 0xffffffff80055ea8 {
+			println!("__se_sys_nanosleep. SEPC:{:X}", self.csr[CSR_SEPC_ADDRESS as usize]);
+			self.dump_flag = true;
 		}
-		if self.pc == 0xffffffff8021578c {
-			println!("plic_irq_mask");
+		if self.pc == 0xffffffff802345a2 {
+			println!("riscv_timer_interrupt");
 		}
-		if self.pc == 0xffffffff80215448 {
-			println!("plic_irq_eoi");
+		if self.pc == 0xffffffff80126a6c {
+			println!("proc_sys_write");
 		}
-		if self.pc == 0xffffffff8006a64a {
-			println!("generic_handle_irq");
+		if self.pc == 0xffffffff800d1c16 {
+			println!("ksys_write");
+			println!("A0:{:X}", self.x[10]);
+			let mut offset = 0;
+			while true {
+				match self.mmu.load(self.x[11] as u64 + offset) {
+					Ok(data) => {
+						match data {
+							0 => break,
+							_ => {
+								let str = vec![data];
+								match str::from_utf8(&str) {
+									Ok(s) => print!("{}", s),
+									Err(_e) => break
+								};
+							}
+						};
+					},
+					Err(_e) => break
+				};
+				offset += 1;
+			}
+			println!();
 		}
-		if self.pc == 0xffffffff801eb758 {
-			println!("blk_mq_complete_request");
+		if self.pc == 0xffffffff801e581a {
+			println!("redirected_tty_write");
 		}
-		if self.pc == 0xffffffff801ecba0 {
-			println!("blk_mq_start_stopped_hw_queues");
+		if self.pc == 0xffffffff801e549a {
+			println!("tty_write");
 		}
-		if self.pc == 0xffffffff8023a3e2 {
-			println!("virtqueue_detach_unused_buf");
+		if self.pc == 0xffffffff801b1186 {
+			//println!("_copy_from_user");
 		}
-		if self.pc == 0xffffffff8023a296 {
-			println!("detach_buf_packed");
+		if self.pc == 0xffffffff801e84d2 {
+			println!("process_echoes");
 		}
-		if self.pc == 0xffffffff8023a172 {
-			println!("detach_buf_split A0:{:X} A1:{:X}", self.x[10], self.x[11]);
+		if self.pc == 0xffffffff801fe736 {
+			println!("uart_write_room");
 		}
-		if self.pc == 0xffffffff802398d6 {
-			println!("virtqueue_notify");
+		if self.pc == 0xffffffff80200114 {
+			println!("uart_write");
 		}
-		if self.pc == 0xffffffff8023a0ee {
-			println!("vring_unmap_desc_packed");
+		if self.pc == 0xffffffff802035c8 {
+			println!("serial8250_start_tx");
 		}
-		if self.pc == 0xffffffff8023ac8a {
-			println!("virtqueue_add");		
+		if self.pc == 0xffffffff80201196 {
+			println!("mem_serial_out");
 		}
-		if self.pc == 0xffffffff8023b54c {
-			println!("virtqueue_add_sgs");
+		if self.pc == 0xffffffff802011ac {
+			println!("A1:{:X} A2:{:X}", self.x[11], self.x[12]);
 		}
-		if self.pc == 0xffffffff801f1a34 {
-			println!("blk_mq_sched_dispatch_requests");
+		if self.pc == 0xffffffff801fe5d4 {
+			println!("uart_start");
 		}
-		if self.pc == 0xffffffff801ed6aa {
-			println!("blk_mq_dispatch_rq_list");
+		if self.pc == 0xffffffff801fe678 {
+			println!("uart_flush_chars");
 		}
-		if self.pc == 0xffffffff8027602e {
-			println!("virtio_queue_rq");
+		if self.pc == 0xffffffff801fda16 {
+			println!("__uart_start.isra.0");
 		}
-		if self.pc == 0xffffffff802761d0 {
-			println!("virtio_queue_rq - virtqueue_kick");		
+		if self.pc == 0xffffffff80203220 {
+			println!("serial8250_tx_chars");
 		}
-		if self.pc == 0xffffffff80275de2 {
-			println!("virtblk_done");
+		if self.pc == 0xffffffff802019da {
+			println!("serial8250_rx_chars");
 		}
-		if self.pc == 0xffffffff80275e70 {
-			println!("virtblk_done ret");
+		if self.pc == 0xffffffff801e4e64 {
+			println!("tty_wakeup");
 		}
-		if self.pc == 0xffffffff80239c00 {
-			println!("virtqueue_kick_prepare");
+		if self.pc == 0xffffffff801fdcb0 {
+			println!("uart_write_wakeup");
 		}
-		if self.pc == 0xffffffff80239cec {
-			println!("virtqueue_kick");
+		if self.pc == 0xffffffff80201172 {
+			println!("mem_serial_in");
 		}
-		if self.pc == 0xffffffff80239e90 {
-			println!("virtqueue_enable_cb");
+		if self.pc == 0xffffffff8020353a {
+			println!("serial8250_default_handle_irq");
 		}
-		if self.pc == 0xffffffff80239d2c {
-			println!("virtqueue_disable_cb");
+		if self.pc == 0xffffffff80203488 {
+			println!("serial8250_handle_irq.part.0");
 		}
-		if self.pc == 0xffffffff8023a474 {
-			println!("virtqueue_get_buf_ctx");
+		if self.pc == 0xffffffff80201a72{
+			println!("serial8250_modem_status");
 		}
-		if self.pc == 0xffffffff8023983c {
-			println!("virtio_break_device");
+		if self.pc == 0xffffffff80200284 {
+			println!("serial8250_interrupt");
 		}
-		if self.pc == 0xffffffff8023a88c {
-			println!("vring_create_virtqueue");
+		if self.pc == 0xffffffff8004bb1e {
+			println!("handle_irq_event_percpu");
 		}
-		if self.pc == 0xffffffff8023982c {
-			println!("virtqueue_is_broken");
+		if self.pc == 0xffffffff801bf62e {
+			println!("Claim:{:X}", self.x[9]);
 		}
-		if self.pc == 0xffffffff80268358 {
-			println!("dev_err");
+		if self.pc == 0xffffffff802345bc {
+			println!("riscv_timer_interrupt-event_handler A5:{:X}", self.x[15]);
 		}
-		if self.pc == 0xffffffff8023b46a {
-			println!("EIO");
+		if self.pc == 0xffffffff8005d4dc {
+			println!("tick_handle_periodic");
+		}
+		if self.pc == 0xffffffff802344f0 {
+			println!("riscv_clock_next_event");
+		}
+		if self.pc == 0xffffffff80234518 {
+			//println!("riscv_clocksource_rdtime");
+		}
+		if self.pc == 0xffffffff80234538 {
+			println!("riscv_timer_dying_cpu");
+		}
+		if self.pc == 0xffffffff8023454e {
+			println!("riscv_timer_starting_cpu");
+		}
+		if self.pc == 0xffffffff800554be {
+			println!("update_process_times");
+		}
+		if self.pc == 0xffffffff8005d17c {
+			println!("clockevents_program_event");
+		}
+		if self.pc == 0xffffffff80055492 {
+			println!("run_local_timers");
+		}
+		if self.pc == 0xffffffff80054c88 {
+			println!("run_timer_softirq");
+		}
+		if self.pc == 0xffffffff802036da {
+			//self.pc = 0xffffffff802036dc
+		}
+		if self.clock >= 0x36596128 {
+			self.dump_current_instruction_to_terminal();
 		}
 		*/
-		if /*self.x[1] == 0x580fc4deed5c0c94 &&*/ (self.pc & 0xffffffffff000000) == 0x0000003fed000000 {
-			//println!("SSTATUS:{:X} S4:{:X} SP:{:X}", self.csr[CSR_SSTATUS_ADDRESS as usize], self.x[20], self.x[2]);
-			//self.dump_current_instruction_to_terminal();
-			//println!("X1:{:X} X2:{:X} A1:{:X} A4:{:X} A5:{:X}", self.x[1], self.x[2], self.x[11], self.x[14], self.x[15]);
-		}
 		let word = match self.fetch() {
 			Ok(word) => word,
 			Err(e) => return Err(e)
@@ -777,8 +853,8 @@ impl Cpu {
 	}
 
 	fn handle_interrupt(&mut self, instruction_address: u64) {
+		self.write_csr_raw(CSR_SIP_ADDRESS, (self.csr[CSR_SIP_ADDRESS as usize] & !0x2) | ((self.mmu.get_clint_msip_lsb() as u64) << 1));
 		match self.mmu.detect_interrupt() {
-			InterruptType::None => {},
 			InterruptType::KeyInput => {
 				match self.handle_trap(Trap {
 					trap_type: TrapType::SupervisorExternalInterrupt,
@@ -794,7 +870,7 @@ impl Cpu {
 			},
 			InterruptType::Timer => {
 				match self.handle_trap(Trap {
-					trap_type: TrapType::SupervisorSoftwareInterrupt,
+					trap_type: TrapType::SupervisorTimerInterrupt,
 					value: self.pc // dummy
 				}, instruction_address, true) {
 					true => {
@@ -804,6 +880,21 @@ impl Cpu {
 					},
 					false => {}
 				};
+			},
+			InterruptType::TimerSoftware => {
+				/*
+				match self.handle_trap(Trap {
+					trap_type: TrapType::SupervisorSoftwareInterrupt,
+					value: self.pc // dummy
+				}, instruction_address, true) {
+					true => {
+						self.mmu.reset_clint_software_interrupting();
+						self.mmu.reset_interrupt();
+						self.wfi = false;
+					},
+					false => {}
+				};
+				*/
 			},
 			InterruptType::Virtio => {
 				match self.handle_trap(Trap {
@@ -818,7 +909,8 @@ impl Cpu {
 					},
 					false => {}
 				};
-			}
+			},
+			InterruptType::None => {},
 		};
 	}
 
@@ -830,6 +922,7 @@ impl Cpu {
 		let current_privilege_encoding = get_privilege_encoding(&self.privilege_mode) as u64;
 		let cause = get_trap_cause(&trap, &self.xlen);
 
+		// First, determine which privilege mode should handle the trap.
 		// @TODO: Check if this logic is correct
 		let mdeleg = match is_interrupt {
 			true => self.csr[CSR_MIDELEG_ADDRESS as usize],
@@ -847,9 +940,17 @@ impl Cpu {
 				false => PrivilegeMode::User
 			}
 		};
+		let new_privilege_encoding = get_privilege_encoding(&new_privilege_mode) as u64;
 
 		// @TODO: Which we should do, dispose or pend, if trap is disabled?
 		// Disposing so far.
+
+		let current_status = match self.privilege_mode {
+			PrivilegeMode::Machine => self.csr[CSR_MSTATUS_ADDRESS as usize],
+			PrivilegeMode::Supervisor => self.csr[CSR_SSTATUS_ADDRESS as usize],
+			PrivilegeMode::User => self.csr[CSR_USTATUS_ADDRESS as usize],
+			PrivilegeMode::Reserved => panic!(),
+		};
 
 		let status = match new_privilege_mode {
 			PrivilegeMode::Machine => self.csr[CSR_MSTATUS_ADDRESS as usize],
@@ -858,38 +959,120 @@ impl Cpu {
 			PrivilegeMode::Reserved => panic!(),
 		};
 
-		let mie = (status >> 3) & 1;
-		let sie = (status >> 1) & 1;
-		let uie = status & 1;
+		// Second, ignore the interrupt if it's disabled by some conditions
 
 		if is_interrupt {
-			//println!("Interrupt! Cause:{:X}", cause);
-			let interrupt_privilege_mode = get_interrupt_privilege_mode(&trap);
-			let interrupt_privilege_encoding = get_privilege_encoding(&interrupt_privilege_mode) as u64;
-			match new_privilege_mode {
-				PrivilegeMode::Machine => {
-					if mie == 0 {
-						return false;
-					}
-				},
-				PrivilegeMode::Supervisor => {
-					if sie == 0 {
-						return false;
-					}
-				},
-				PrivilegeMode::User => {
-					if uie == 0 {
-						return false;
-					}
-				},
-				PrivilegeMode::Reserved => panic!()
+			let ie = match new_privilege_mode {
+				PrivilegeMode::Machine => self.csr[CSR_MIE_ADDRESS as usize],
+				PrivilegeMode::Supervisor => self.csr[CSR_SIE_ADDRESS as usize],
+				PrivilegeMode::User => self.csr[CSR_UIE_ADDRESS as usize],
+				PrivilegeMode::Reserved => panic!(),
 			};
-			if current_privilege_encoding > interrupt_privilege_encoding {
+
+			let current_mie = (current_status >> 3) & 1;
+			let current_sie = (current_status >> 1) & 1;
+			let current_uie = current_status & 1;
+
+			let mie = (status >> 3) & 1;
+			let sie = (status >> 1) & 1;
+			let uie = status & 1;
+
+			let msie = (ie >> 3) & 1;
+			let ssie = (ie >> 1) & 1;
+			let usie = ie & 1;
+
+			let mtie = (ie >> 7) & 1;
+			let stie = (ie >> 5) & 1;
+			let utie = (ie >> 4) & 1;
+
+			let meie = (ie >> 11) & 1;
+			let seie = (ie >> 9) & 1;
+			let ueie = (ie >> 8) & 1;
+
+			// 1. Interrupt is always enabled if new privilege level is higher
+			// than current privilege level
+			// 2. Interrupt is always disabled if new privilege level is lower
+			// than current privilege level
+			// 3. Interrupt is enabled if xIE in xstatus is 1 where x is privilege level
+			// and new privilege level equals to current privilege level
+
+			if new_privilege_encoding < current_privilege_encoding {
 				return false;
+			} else if current_privilege_encoding == new_privilege_encoding {
+				match self.privilege_mode {
+					PrivilegeMode::Machine => {
+						if current_mie == 0 {
+							return false;
+						}
+					},
+					PrivilegeMode::Supervisor => {
+						if current_sie == 0 {
+							return false;
+						}
+					},
+					PrivilegeMode::User => {
+						if current_uie == 0 {
+							return false;
+						}
+					},
+					PrivilegeMode::Reserved => panic!()
+				};
 			}
+
+			// Interrupt can be maskable by xie csr register
+			// where x is a new privilege mode.
+
+			match trap.trap_type {
+				TrapType::UserSoftwareInterrupt => {
+					if usie == 0 {
+						return false;
+					}
+				},
+				TrapType::SupervisorSoftwareInterrupt => {
+					if ssie == 0 {
+						return false;
+					}
+				},
+				TrapType::MachineSoftwareInterrupt => {
+					if msie == 0 {
+						return false;
+					}
+				},
+				TrapType::UserTimerInterrupt => {
+					if utie == 0 {
+						return false;
+					}
+				},
+				TrapType::SupervisorTimerInterrupt => {
+					if stie == 0 {
+						return false;
+					}
+				},
+				TrapType::MachineTimerInterrupt => {
+					if mtie == 0 {
+						return false;
+					}
+				},
+				TrapType::UserExternalInterrupt => {
+					if ueie == 0 {
+						return false;
+					}
+				},
+				TrapType::SupervisorExternalInterrupt => {
+					if seie == 0 {
+						return false;
+					}				
+				},
+				TrapType::MachineExternalInterrupt => {
+					if meie == 0 {
+						return false;
+					}
+				},
+				_ => {}
+			};
 		}
 
-		// println!("Trap! PrivilegeMode:{} PC:{:X}", _get_privilege_mode_name(&self.privilege_mode), instruction_address);
+		// So, this trap should be handled
 
 		self.privilege_mode = new_privilege_mode;
 		self.mmu.update_privilege_mode(self.privilege_mode.clone());
@@ -918,18 +1101,18 @@ impl Cpu {
 			PrivilegeMode::Reserved => panic!()
 		};
 
-		//println!("Trap! PC:{:X} cause:{:X} interrupt:{} PrivilegeMode:{}", self.pc, cause, is_interrupt,
-		// 	_get_privilege_mode_name(&self.privilege_mode));
-
 		self.write_csr_raw(csr_epc_address, match is_interrupt {
 			true => self.pc, // @TODO: remove this hack
-			false => instruction_address
+			_ => instruction_address
 		});
 		self.write_csr_raw(csr_cause_address, cause);
 		self.write_csr_raw(csr_tval_address, trap.value);
 		self.pc = self.csr[csr_tvec_address as usize];
 
-		//println!("PC: {:X}", self.pc);
+		// Add 4 * cause if tvec has vector type address
+		if (self.pc & 0x3) != 0 {
+			self.pc = (self.pc & !0x3) + 4 * (cause & 0xffff);
+		}
 
 		match self.privilege_mode {
 			PrivilegeMode::Machine => {
@@ -1009,7 +1192,12 @@ impl Cpu {
 
 	fn write_csr_raw(&mut self, address: u16, value: u64) {
 		self.csr[address as usize] = value;
-		//println!("Write CSR AD:{:X} VAL:{:X} PC:{:X}", address, value, self.pc);
+		if address == CSR_MIDELEG_ADDRESS ||
+			address == CSR_SIDELEG_ADDRESS ||
+			address == CSR_SSTATUS_ADDRESS ||
+			address == CSR_SIE_ADDRESS {
+			//println!("Write CSR AD:{:X} VAL:{:X} PC:{:X} CLOCK:{:X}", address, value, self.pc, self.clock);
+		}
 	}
 
 	fn update_addressing_mode(&mut self, value: u64) {
@@ -1475,7 +1663,8 @@ impl Cpu {
 							1 => {
 								if rs1 == 0 && rs2 == 0 {
 									// C.EBREAK
-									panic!("C.EBREAK is not supported yet. PC:{:X}", self.pc);
+									// ebreak
+									return 0x00100073;
 								}
 								if rs1 != 0 && rs2 == 0 {
 									// C.JALR
@@ -1595,6 +1784,7 @@ impl Cpu {
 				_ => return Err(())
 			},
 			0x27 => match funct3 {
+				2 => Instruction::FSW,
 				3 => Instruction::FSD,
 				_ => return Err(())
 			},
@@ -1606,6 +1796,8 @@ impl Cpu {
 						2 => Instruction::LRW,
 						3 => Instruction::SCW,
 						8 => Instruction::AMOORW,
+						0xc => Instruction::AMOANDW,
+						0x1c => Instruction::AMOMAXUW,
 						_ => return Err(())
 					}
 				},
@@ -1716,6 +1908,7 @@ impl Cpu {
 				0x51 => match funct3 {
 					0 => Instruction::FLED,
 					1 => Instruction::FLTD,
+					2 => Instruction::FEQD,
 					_ => return Err(())
 				},
 				0x61 => match funct5 {
@@ -1724,12 +1917,20 @@ impl Cpu {
 				},
 				0x69 => match funct5 {
 					0 => Instruction::FCVTDW,
+					1 => Instruction::FCVTDWU,
 					2 => Instruction::FCVTDL,
 					_ => return Err(())
 				},
 				0x70 => match funct5 {
 					0 => match funct3 {
 						0 => Instruction::FMVXW,
+						_ => return Err(())
+					},
+					_ => return Err(())
+				},
+				0x71 => match funct5 {
+					0 => match funct3 {
+						0 => Instruction::FMVXD,
 						_ => return Err(())
 					},
 					_ => return Err(())
@@ -1764,6 +1965,7 @@ impl Cpu {
 						9 => Instruction::SFENCEVMA,
 						_ => match word {
 							0x00000073 => Instruction::ECALL,
+							0x00100073 => Instruction::EBREAK,
 							0x00200073 => Instruction::URET,
 							0x10200073 => Instruction::SRET,
 							0x10500073 => Instruction::WFI,
@@ -1800,8 +2002,8 @@ impl Cpu {
 					((word & 0x7e000000) >> 20) | // imm[10:5] = [30:25]
 					((word & 0x00000f00) >> 7) // imm[4:1] = [11:8]
 				) as i32 as i64 as u64;
-				//if instruction_address == 0xffffffff80060cc6 {
-				//	println!("Compare {:X} {:X} {:X} {:X} {:X}", self.x[rs1 as usize], self.x[rs2 as usize], instruction_address, imm, instruction_address.wrapping_add(imm));
+				//if instruction_address == 0xffffffff802036da {
+				//	println!("Compare RS1:{:X} RS2:{:X} RS1VAL:{:X} RS2VAL:{:X}", rs1, rs2, self.x[rs1 as usize], self.x[rs2 as usize]);
 				//}
 				match instruction {
 					Instruction::BEQ => {
@@ -1878,9 +2080,6 @@ impl Cpu {
 							Err(e) => return Err(e)
 						};
 						let tmp = self.x[rs as usize];
-						if csr == CSR_SSTATUS_ADDRESS {
-							//println!("CSRRS SSTATUS:{:X} RS:{:X} RSVAL:{:X}", data, rs, tmp);
-						}
 						self.x[rd as usize] = self.sign_extend(data as i64);
 						//self.x[0] = 0; // hard-wired zero
 						match self.write_csr(csr, self.unsigned_data(self.x[rd as usize] | tmp)) {
@@ -1964,7 +2163,7 @@ impl Cpu {
 						// @TODO: Implement properly
 						self.f[rd as usize] = match self.mmu.load_word(self.x[rs1 as usize].wrapping_add(imm) as u64) {
 							Ok(data) => {
-								f32::from_bits(data) as f64
+								f64::from_bits(data as i32 as i64 as u64)
 							},
 							Err(e) => return Err(e)
 						};
@@ -2155,6 +2354,32 @@ impl Cpu {
 						};
 						self.x[rd as usize] = tmp as i32 as i64;
 					},
+					Instruction::AMOANDW => {
+						let tmp = match self.mmu.load_word(self.unsigned_data(self.x[rs1 as usize])) {
+							Ok(data) => data,
+							Err(e) => return Err(e)
+						};
+						match self.mmu.store_word(self.unsigned_data(self.x[rs1 as usize]), (self.x[rs2 as usize] & (tmp as i64)) as u32) {
+							Ok(()) => {},
+							Err(e) => return Err(e)
+						};
+						self.x[rd as usize] = tmp as i32 as i64;
+					},
+					Instruction::AMOMAXUW => {
+						let tmp = match self.mmu.load_word(self.unsigned_data(self.x[rs1 as usize])) {
+							Ok(data) => data,
+							Err(e) => return Err(e)
+						};
+						let max = match self.x[rs2 as usize] as u32 >= tmp {
+							true => self.x[rs2 as usize] as u32,
+							false => tmp
+						};
+						match self.mmu.store_word(self.unsigned_data(self.x[rs1 as usize]), max) {
+							Ok(()) => {},
+							Err(e) => return Err(e)
+						};
+						self.x[rd as usize] = tmp as i32 as i64;
+					},
 					Instruction::AMOORD => {
 						let tmp = match self.mmu.load_doubleword(self.unsigned_data(self.x[rs1 as usize])) {
 							Ok(data) => data,
@@ -2226,6 +2451,9 @@ impl Cpu {
 							_ => self.sign_extend((self.x[rs1 as usize] as i32).wrapping_div(self.x[rs2 as usize] as i32) as i64)
 						};
 					},
+					Instruction::EBREAK => {
+						// @TODO: Implement
+					},
 					Instruction::ECALL => {
 						let csr_epc_address = match self.privilege_mode {
 							PrivilegeMode::User => CSR_UEPC_ADDRESS,
@@ -2253,21 +2481,30 @@ impl Cpu {
 					},
 					Instruction::FCVTDS => {
 						// @TODO: Implement properly
-						self.f[rd as usize] = self.f[rs1 as usize] as f32 as f64;
+						self.f[rd as usize] = f32::from_bits(self.f[rs1 as usize].to_bits() as u32) as f64;
 					},
 					Instruction::FCVTDW => {
+						self.f[rd as usize] = self.x[rs1 as usize] as i32 as f64;
+					},
+					Instruction::FCVTDWU => {
 						self.f[rd as usize] = self.x[rs1 as usize] as u32 as f64;
 					},
 					Instruction::FCVTSD => {
-						self.f[rd as usize] = self.f[rs1 as usize] as f32 as f64;
+						self.f[rd as usize] = f32::from_bits(self.f[rs1 as usize].to_bits() as u32) as f64;
 					},
 					Instruction::FCVTWD => {
 						self.x[rd as usize] = self.f[rs1 as usize] as u32 as i32 as i64;
 					},
 					Instruction::FDIVD => {
 						self.f[rd as usize] = match self.f[rs2 as usize] == 0.0 {
-							true => 0.0, // @TODO: Implement correctly
+							true => 0.0, // @TODO: Implement properly
 							false => self.f[rs1 as usize] / self.f[rs2 as usize]
+						};
+					},
+					Instruction::FEQD => {
+						self.x[rd as usize] = match self.f[rs1 as usize] == self.f[rs2 as usize] {
+							true => 1,
+							false => 0
 						};
 					},
 					Instruction::FLED => {
@@ -2291,11 +2528,14 @@ impl Cpu {
 					Instruction::FMVDX => {
 						self.f[rd as usize] = f64::from_bits(self.x[rs1 as usize] as u64);
 					},
+					Instruction::FMVXD => {
+						self.x[rd as usize] = self.f[rs1 as usize].to_bits() as i64;
+					},
 					Instruction::FMVXW => {
-						self.x[rd as usize] = (self.f[rs1 as usize] as f32).to_bits() as i32 as i64;
+						self.x[rd as usize] = self.f[rs1 as usize].to_bits() as u32 as i32 as i64;
 					},
 					Instruction::FMVWX => {
-						self.f[rd as usize] = f32::from_bits(self.x[rs1 as usize] as u32) as f64;
+						self.f[rd as usize] = f64::from_bits(self.x[rs1 as usize] as u32 as u64);
 					},
 					Instruction::FNMSUBD => {
 						self.f[rd as usize] = -(self.f[rs1 as usize] * self.f[rs2 as usize]) + self.f[rs3 as usize];
@@ -2446,7 +2686,6 @@ impl Cpu {
 					},
 					Instruction::SCD => {
 						// @TODO: Implement properly
-						//println!("SCD RS1:{:X} RS2:{:X} IMM:{:X} RS1VAL:{:X} RS2VAL:{:X}", rs1, rs2, imm, self.x[rs1 as usize], self.x[rs2 as usize]);
 						match self.mmu.store_doubleword(self.x[rs1 as usize] as u64, self.x[rs2 as usize] as u64) {
 							Ok(()) => {},
 							Err(e) => return Err(e)
@@ -2455,7 +2694,6 @@ impl Cpu {
 					},
 					Instruction::SCW => {
 						// @TODO: Implement properly
-						//println!("SCW RS1:{:X} RS2:{:X} IMM:{:X} RS1VAL:{:X} RS2VAL:{:X}", rs1, rs2, imm, self.x[rs1 as usize], self.x[rs2 as usize]);
 						match self.mmu.store_word(self.x[rs1 as usize] as u64, self.x[rs2 as usize] as u32) {
 							Ok(()) => {},
 							Err(e) => return Err(e)
@@ -2502,7 +2740,6 @@ impl Cpu {
 						self.x[rd as usize] = (self.x[rs1 as usize] as u32).wrapping_shr(self.x[rs2 as usize] as u32) as i32 as i64;
 					},
 					Instruction::WFI => {
-						//println!("WFI PC:{:X}", instruction_address);
 						self.wfi = true;
 					},
 					Instruction::XOR => {
@@ -2529,6 +2766,12 @@ impl Cpu {
 				match instruction {
 					Instruction::FSD => {
 						match self.mmu.store_doubleword(self.x[rs1 as usize].wrapping_add(imm) as u64, self.f[rs2 as usize].to_bits()) {
+							Ok(()) => {},
+							Err(e) => return Err(e)
+						};
+					},
+					Instruction::FSW => {
+						match self.mmu.store_word(self.x[rs1 as usize].wrapping_add(imm) as u64, self.f[rs2 as usize].to_bits() as u32) {
 							Ok(()) => {},
 							Err(e) => return Err(e)
 						};
@@ -2589,7 +2832,6 @@ impl Cpu {
 			}
 		}
 		self.x[0] = 0; // hard-wired zero
-		self.f[0] = 0.0; // hard-wired zero
 		Ok(())
 	}
 

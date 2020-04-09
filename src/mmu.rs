@@ -94,12 +94,14 @@ impl Mmu {
 
 	pub fn detect_interrupt(&mut self) -> InterruptType {
 		let virtio_is_interrupting = self.is_disk_interrupting();
-		let timer_is_interrupting = self.is_clint_interrupting();
 		let uart_is_interrupting = self.is_uart_interrupting();
+		let timer_is_interrupting = self.is_clint_interrupting();
+		let software_timer_is_interrupting = self.is_clint_software_interrupting();
 		self.plic.update(
 			virtio_is_interrupting,
+			uart_is_interrupting,
 			timer_is_interrupting,
-			uart_is_interrupting
+			software_timer_is_interrupting
 		);
 		self.plic.get_interrupt()
 	}
@@ -109,19 +111,10 @@ impl Mmu {
 	}
 
 	pub fn update_addressing_mode(&mut self, new_addressing_mode: AddressingMode) {
-		// println!("{}", _get_addressing_mode_name(&new_addressing_mode));
 		self.addressing_mode = new_addressing_mode;
 	}
 
 	pub fn update_privilege_mode(&mut self, mode: PrivilegeMode) {
-		/*
-		match mode {
-			PrivilegeMode::Machine => println!("Machine"),
-			PrivilegeMode::Supervisor => println!("Supervisor"),
-			PrivilegeMode::User => println!("User"),
-			PrivilegeMode::Reserved => println!("Reserved")
-		};
-		*/
 		self.privilege_mode = mode;
 	}
 
@@ -304,7 +297,7 @@ impl Mmu {
 		let effective_address = self.get_effective_address(address);
 		// @TODO: Check valid memory map
 		match address {
-			0x00001020..=0x0000165e => self.dtb[address as usize - 0x1020],
+			0x00001020..=0x00001ea2 => self.dtb[address as usize - 0x1020],
 			0x02000000..=0x0200ffff => self.clint.load(effective_address),
 			0x0C000000..=0x0fffffff => self.plic.load(effective_address),
 			0x10000000..=0x100000ff => self.uart.load(effective_address),
@@ -627,8 +620,8 @@ impl Mmu {
 
 		let new_id = self.disk.get_new_id();
 		self.store_halfword_raw(base_used_address.wrapping_add(2), new_id);
-		self.store_word_raw(base_used_address.wrapping_add(4).wrapping_add(new_id.wrapping_sub(1) as u64 * 8), index as u32);
-		self.store_word_raw(base_used_address.wrapping_add(4).wrapping_add(new_id.wrapping_sub(1) as u64 * 8).wrapping_add(4), 3);
+		//self.store_word_raw(base_used_address.wrapping_add(4).wrapping_add(new_id.wrapping_sub(1) as u64 * 8), index as u32);
+		//self.store_word_raw(base_used_address.wrapping_add(4).wrapping_add(new_id.wrapping_sub(1) as u64 * 8).wrapping_add(4), 3);
 	}
 
 	//
@@ -647,6 +640,18 @@ impl Mmu {
 
 	pub fn reset_clint_interrupting(&mut self) {
 		self.clint.reset_interrupting();
+	}
+
+	pub fn is_clint_software_interrupting(&self) -> bool {
+		self.clint.is_software_interrupting()
+	}
+
+	pub fn reset_clint_software_interrupting(&mut self) {
+		self.clint.reset_software_interrupting();
+	}
+
+	pub fn get_clint_msip_lsb(&self) -> u32 {
+		self.clint.get_msip_lsb()
 	}
 
 	pub fn is_uart_interrupting(&mut self) -> bool {

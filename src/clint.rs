@@ -1,8 +1,10 @@
 pub struct Clint {
 	clock: u64,
 	msip: u32,
-	period_clock: u64,
-	interrupting: bool
+	mtimecmp: u64,
+	mtime: u64,
+	interrupting: bool,
+	software_interrupting: bool
 }
 
 impl Clint {
@@ -10,17 +12,19 @@ impl Clint {
 		Clint {
 			clock: 0,
 			msip: 0,
-			period_clock: 0,
-			interrupting: false
+			mtimecmp: 0,
+			mtime: 0,
+			interrupting: false,
+			software_interrupting: false
 		}
 	}
 
 	pub fn tick(&mut self) {
-		// @TODO: Implement more properly
-		if (self.msip & 1) == 1 && self.period_clock > 0 && self.clock > self.period_clock {
+		if self.mtimecmp > 0 && self.mtime > self.mtimecmp {
 			self.interrupting = true;
 		}
 		self.clock = self.clock.wrapping_add(1);
+		self.mtime = self.mtime.wrapping_add(1);
 	}
 
 	pub fn load(&self, address: u64) -> u8 {
@@ -37,32 +41,56 @@ impl Clint {
 				((self.msip >> 16) & 0xff) as u8
 			},
 			0x02000003 => {
-				((self.msip >> 16) & 0xff) as u8
+				((self.msip >> 24) & 0xff) as u8
 			},
 			// MTIMECMP Registers 8 bytes
 			0x02004000 => {
-				(self.period_clock & 0xff) as u8
+				self.mtimecmp as u8
 			},
 			0x02004001 => {
-				((self.period_clock >> 8) & 0xff) as u8
+				(self.mtimecmp >> 8) as u8
 			},
 			0x02004002 => {
-				((self.period_clock >> 16) & 0xff) as u8
+				(self.mtimecmp >> 16) as u8
 			},
 			0x02004003 => {
-				((self.period_clock >> 24) & 0xff) as u8
+				(self.mtimecmp >> 24) as u8
 			},
 			0x02004004 => {
-				((self.period_clock >> 32) & 0xff) as u8
+				(self.mtimecmp >> 32) as u8
 			},
 			0x02004005 => {
-				((self.period_clock >> 40) & 0xff) as u8
+				(self.mtimecmp >> 40) as u8
 			},
 			0x02004006 => {
-				((self.period_clock >> 48) & 0xff) as u8
+				(self.mtimecmp >> 48) as u8
 			},
 			0x02004007 => {
-				((self.period_clock >> 56) & 0xff) as u8
+				(self.mtimecmp >> 56) as u8
+			},
+			0x0200bff8 => {
+				self.mtime as u8
+			},
+			0x0200bff9 => {
+				(self.mtime >> 8) as u8
+			},
+			0x0200bffa => {
+				(self.mtime >> 16) as u8
+			},
+			0x0200bffb => {
+				(self.mtime >> 24) as u8
+			},
+			0x0200bffc => {
+				(self.mtime >> 32) as u8
+			},
+			0x0200bffd => {
+				(self.mtime >> 40) as u8
+			},
+			0x0200bffe => {
+				(self.mtime >> 48) as u8
+			},
+			0x0200bfff => {
+				(self.mtime >> 56) as u8
 			},
 			_ => 0,
 		}
@@ -73,6 +101,9 @@ impl Clint {
 		match address {
 			// MSIP register 4 bytes
 			0x02000000 => {
+				if (self.msip & 1) == 0 && (value & 1) == 1 {
+					self.software_interrupting = true;
+				}
 				self.msip = (self.msip & !0xff) | (value as u32);
 			},
 			0x02000001 => {
@@ -86,28 +117,28 @@ impl Clint {
 			},
 			// MTIMECMP Registers 8 bytes
 			0x02004000 => {
-				self.period_clock = (self.period_clock & !0xff) | (value as u64);
+				self.mtimecmp = (self.mtimecmp & !0xff) | (value as u64);
 			},
 			0x02004001 => {
-				self.period_clock = (self.period_clock & !0xff00) | ((value as u64) << 8);
+				self.mtimecmp = (self.mtimecmp & !(0xff << 8)) | ((value as u64) << 8);
 			},
 			0x02004002 => {
-				self.period_clock = (self.period_clock & !0xff0000) | ((value as u64) << 16);
+				self.mtimecmp = (self.mtimecmp & !(0xff << 16)) | ((value as u64) << 16);
 			},
 			0x02004003 => {
-				self.period_clock = (self.period_clock & !0xff000000) | ((value as u64) << 24);
+				self.mtimecmp = (self.mtimecmp & !(0xff << 24)) | ((value as u64) << 24);
 			},
 			0x02004004 => {
-				self.period_clock = (self.period_clock & !0xff00000000) | ((value as u64) << 32);
+				self.mtimecmp = (self.mtimecmp & !(0xff << 32)) | ((value as u64) << 32);
 			},
 			0x02004005 => {
-				self.period_clock = (self.period_clock & !0xff0000000000) | ((value as u64) << 40);
+				self.mtimecmp = (self.mtimecmp & !(0xff << 40)) | ((value as u64) << 40);
 			},
 			0x02004006 => {
-				self.period_clock = (self.period_clock & !0xff000000000000) | ((value as u64) << 48);
+				self.mtimecmp = (self.mtimecmp & !(0xff << 48)) | ((value as u64) << 48);
 			},
 			0x02004007 => {
-				self.period_clock = (self.period_clock & !0xff00000000000000) | ((value as u64) << 56);
+				self.mtimecmp = (self.mtimecmp & !(0xff << 56)) | ((value as u64) << 56);
 			},
 			_ => {}
 		};
@@ -119,6 +150,18 @@ impl Clint {
 
 	pub fn reset_interrupting(&mut self) {
 		self.interrupting = false;
-		self.clock = 0;
+		self.mtime = 0;
+	}
+
+	pub fn is_software_interrupting(&self) -> bool {
+		self.software_interrupting
+	}
+
+	pub fn reset_software_interrupting(&mut self) {
+		self.software_interrupting = false;
+	}
+
+	pub fn get_msip_lsb(&self) -> u32 {
+		self.msip & 1
 	}
 }

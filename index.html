@@ -31,25 +31,34 @@
 
         const selectElement = document.getElementById('file-select');
         const selectedOption = selectElement.selectedOptions[0];
-		const filename = selectedOption.value;
-		const isXv6 = filename === 'xv6/kernel';
+        const filename = selectedOption.value;
+        const isLinux = filename === 'linux/bbl';
+        const isXv6 = filename === 'xv6/kernel';
 
         const elfResponse = await fetch(filename);
         const elfBuffer = await elfResponse.arrayBuffer();
 
         let fsBuffer;
+        let dtbBuffer;
 
-        if (isXv6) {
+        if (isLinux) {
+          const fsResponse = await fetch('linux/busybear.bin');
+          fsBuffer = await fsResponse.arrayBuffer();
+          const dtbResponse = await fetch('linux/dtb.dtb');
+          dtbBuffer = await dtbResponse.arrayBuffer();
+        } else if (isXv6) {
           const fsResponse = await fetch('xv6/fs.img');
           fsBuffer = await fsResponse.arrayBuffer();
+          dtbBuffer = new ArrayBuffer(0); // dummy
 		} else {
           fsBuffer = new ArrayBuffer(0); // dummy
+          dtbBuffer = new ArrayBuffer(0); // dummy
 		}
 
         const riscv = WasmRiscv.new();
         currentRiscv = riscv;
         riscv.running = false;
-        riscv.init(new Uint8Array(elfBuffer), new Uint8Array(fsBuffer));
+        riscv.init(new Uint8Array(elfBuffer), new Uint8Array(fsBuffer), new Uint8Array(dtbBuffer));
 
         const outputToTerminal = () => {
           const output_bytes = [];
@@ -67,7 +76,7 @@
           }
 		};
 
-        if (!isXv6) {
+        if (!isXv6 && !isLinux) {
           riscv.run();
           outputToTerminal();
 		} else {
@@ -147,7 +156,8 @@
       };
     </script>
     <select id="file-select">
-      <option value="xv6/kernel" selected>xv6 (tiny OS)</option>
+      <option value="linux/bbl" selected>Linux</option>
+      <option value="xv6/kernel">xv6 (tiny OS)</option>
       <option value="riscv-tests/rv32ui-p-add">rv32ui-p-add test</option>
       <option value="riscv-tests/rv32ui-p-addi">rv32ui-p-addi test</option>
       <option value="riscv-tests/rv32ui-p-and">rv32ui-p-and test</option>

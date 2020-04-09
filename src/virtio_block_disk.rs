@@ -57,7 +57,7 @@ impl VirtioBlockDisk {
 	}
 
 	pub fn tick(&mut self) {
-		if self.notify_clock > 0 && self.clock > self.notify_clock + 100 {
+		if self.notify_clock > 0 && self.clock > self.notify_clock + 500 {
 			self.interrupting = true;
 			self.interrupt_status = 1;
 		}
@@ -215,6 +215,9 @@ impl VirtioBlockDisk {
 			},
 			0x10001053 => {
 				self.queue_notify = (self.queue_notify & !0xff000000) | ((value as u32) << 24);
+				if self.notify_clock > 0 {
+					println!("Overlay notify");
+				}
 				self.notify_clock = self.clock;
 			},
 			0x10001060 => {

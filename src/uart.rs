@@ -2,13 +2,13 @@ use terminal::Terminal;
 
 pub struct Uart {
 	clock: u64,
-	receive_register: u8,
-	line_status_register: u8,
-	interrupt_enable_register: u8,
-	interrupt_identification_register: u8,
-	line_control_register: u8,
-	modem_control_register: u8,
-	scratch_register: u8,
+	rbr: u8, // receiver buffer register
+	ier: u8, // interrupt enable register
+	iir: u8, // interrupt identification register
+	lcr: u8, // line control register
+	mcr: u8, // modem control register
+	lsr: u8, // line status register
+	scr: u8, // scratch
 	interrupting: bool,
 	terminal: Box<dyn Terminal>
 }
@@ -17,13 +17,13 @@ impl Uart {
 	pub fn new(terminal: Box<dyn Terminal>) -> Self {
 		Uart {
 			clock: 0,
-			receive_register: 0,
-			line_status_register: 0x20,
-			interrupt_enable_register: 0,
-			interrupt_identification_register: 0xf,
-			line_control_register: 0,
-			modem_control_register: 0,
-			scratch_register: 0,
+			rbr: 0,
+			ier: 0,
+			iir: 0x02,
+			lcr: 0,
+			mcr: 0,
+			lsr: 0x20,
+			scr: 0,
 			interrupting: false,
 			terminal: terminal
 		}
@@ -31,15 +31,21 @@ impl Uart {
 
 	pub fn tick(&mut self) {
 		self.clock = self.clock.wrapping_add(1);
-		if (self.clock % 0x10000) == 0 && !self.interrupting { // @TODO: Fix me
+		if (self.clock % 0x384000) == 0 && !self.interrupting { // @TODO: Fix me
 			let value = self.terminal.get_input();
 			if value != 0 {
-				if (self.interrupt_enable_register & 1) != 0 {
+				if (self.ier & 0x1) != 0 {
 					self.interrupting = true;
-					self.interrupt_identification_register = 0x4;
+					self.iir = 0x04;
 				}
-				self.receive_register = value;
-				self.line_status_register = 0x21; // @TODO: Is this correct?
+				self.rbr = value;
+				self.lsr |= 0x01;
+			} else {
+				if (self.ier & 0x2) != 0 {
+					self.interrupting = true;
+					self.iir = 0x02;
+				}
+				self.lsr |= 0x20;
 			}
 		}
 	}
@@ -55,39 +61,34 @@ impl Uart {
 	pub fn load(&mut self, address: u64) -> u8 {
 		//println!("UART Load AD:{:X}", address);
 		match address {
-			// Receiver Buffer Register
-			0x10000000 => match (self.line_control_register >> 7) == 0 {
+			0x10000000 => match (self.lcr >> 7) == 0 {
 				true => {
-					if (self.interrupt_identification_register & 0xe) == 0x4 {
-						self.interrupt_identification_register = 0xf;
+					if (self.iir & 0x0e) == 0x04 {
+						self.iir |= 0x0e;
 					}
-					let value = self.receive_register;
-					self.receive_register = 0x0;
-					self.line_status_register = 0x20;
-					value
+					let rbr = self.rbr;
+					self.rbr = 0;
+					self.lsr &= !0x01;
+					rbr
 				},
 				false => 0 // @TODO: Implement properly
 			},
-			0x10000001 => match (self.line_control_register >> 7) == 0 {
-				true => self.interrupt_enable_register,
+			0x10000001 => match (self.lcr >> 7) == 0 {
+				true => self.ier,
 				false => 0 // @TODO: Implement properly
 			},
-			0x10000002 => match (self.line_control_register >> 7) == 0 {
-				true => {
-					if (self.interrupt_identification_register & 0xe) != 0x2 {
-						self.interrupt_identification_register = 0xf;
-					}
-					self.interrupt_identification_register
-				},
-				false => 0 // @TODO: Implement properly
+			0x10000002 => {
+				let iir = self.iir;
+				if (self.iir & 0x0e) == 0x02 {
+					self.iir |= 0x0e;
+				}
+				self.iir |= 0x1; // Necessary?
+				iir
 			},
-			0x10000003 => self.line_control_register,
-			0x10000003 => self.modem_control_register,
-			0x10000005 => match (self.line_control_register >> 7) == 0 {
-				true => self.line_status_register, // UART0 LSR
-				false => 0 // @TODO: Implement properly
-			},
-			0x10000007 => self.scratch_register,
+			0x10000003 => self.lcr,
+			0x10000004 => self.mcr,
+			0x10000005 => self.lsr,
+			0x10000007 => self.scr,
 			_ => 0
 		}
 	}
@@ -96,32 +97,33 @@ impl Uart {
 		//println!("UART Store AD:{:X} VAL:{:X}", address, value);
 		match address {
 			// Transfer Holding Register
-			0x10000000 => match (self.line_control_register >> 7) == 0 { // UART0 THR
+			0x10000000 => match (self.lcr >> 7) == 0 {
 				true => {
 					self.terminal.put_byte(value);
-					if (self.interrupt_enable_register & 2) != 0 {
-						self.interrupting = true;
-						self.interrupt_identification_register = 0x3;
-					} else if (self.interrupt_identification_register & 0xe) != 0x2 {
-						self.interrupt_identification_register = 0xf;
+					if (!self.interrupting) {
+						if (self.ier & 2) != 0 {
+							self.interrupting = true;
+							self.iir = 0x2;
+						}
 					}
+					self.lsr |= 0x20;
 				},
 				false => {} // @TODO: Implement properly
 			},
-			0x10000001 => match (self.line_control_register >> 7) == 0 {
+			0x10000001 => match (self.lcr >> 7) == 0 {
 				true => {
-					self.interrupt_enable_register = value;
+					self.ier = value;
 				},
 				false => {} // @TODO: Implement properly
 			},
 			0x10000003 => {
-				self.line_control_register = value;
+				self.lcr = value;
 			},
 			0x10000004 => {
-				self.modem_control_register = value;
+				self.mcr = value;
 			},
 			0x10000007 => {
-				self.scratch_register = value;
+				self.scr = value;
 			},
 			_ => {}
 		};

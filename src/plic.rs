@@ -3,6 +3,7 @@ pub enum InterruptType {
 	None,
 	KeyInput,
 	Timer,
+	TimerSoftware,
 	Virtio
 }
 
@@ -33,27 +34,33 @@ impl Plic {
 
 	pub fn update(&mut self,
 		virtio_is_interrupting: bool,
+		uart_is_interrupting: bool,
 		timer_is_interrupting: bool,
-		uart_is_interrupting: bool) {
+		software_timer_is_interrupting: bool) {
+
+		let virtio_interrupt_id = 1;
+		let uart_interrupt_id = 2;
+		let timer_interrupt_id = 3;
+		let timer_software_interrupt_id = 4;
+
 		let virtio_irq = 1;
-		let timer_irq = 2;
 		let uart_irq = 10;
 
+		// First detect external interrupts
+
 		let virtio_priority = self.priorities[virtio_irq as usize];
-		let timer_priority = self.priorities[timer_irq as usize];
 		let uart_priority = self.priorities[uart_irq as usize];
 
 		let virtio_enabled = ((self.enabled >> virtio_irq) & 1) == 1;
-		let timer_enabled = ((self.enabled >> timer_irq) & 1) == 1;
 		let uart_enabled = ((self.enabled >> uart_irq) & 1) == 1;
 
-		let interruptings = [virtio_is_interrupting, timer_is_interrupting, uart_is_interrupting];
-		let enables = [virtio_enabled, timer_enabled, uart_enabled];
-		let priorities = [virtio_priority, timer_priority, uart_priority];
+		let interruptings = [virtio_is_interrupting, uart_is_interrupting];
+		let enables = [virtio_enabled, uart_enabled];
+		let priorities = [virtio_priority, uart_priority];
 
 		let mut interrupt = 0;
 		let mut priority = 0;
-		for i in 0..3 {
+		for i in 0..2 {
 			if interruptings[i] && enables[i] {
 				if interrupt == 0 || (priorities[i] > priority) {
 					interrupt = i + 1;
@@ -68,19 +75,28 @@ impl Plic {
 			}
 		}
 
+		// Second, detect local interrupts if no external interrupts
+
+		if interrupt == 0 {
+			if timer_is_interrupting {
+				interrupt = 3;
+			} else if software_timer_is_interrupting {
+				interrupt = 4;
+			}
+		}
+
 		self.interrupt = match interrupt {
 			1 => InterruptType::Virtio,
-			2 => InterruptType::Timer,
-			3 => InterruptType::KeyInput,
+			2 => InterruptType::KeyInput,
+			3 => InterruptType::Timer,
+			4 => InterruptType::TimerSoftware,
 			_ => InterruptType::None
 		};
 
-		
 		let irq = match self.interrupt {
-			InterruptType::None => 0,
 			InterruptType::Virtio => virtio_irq,
-			InterruptType::Timer => timer_irq,
-			InterruptType::KeyInput => uart_irq
+			InterruptType::KeyInput => uart_irq,
+			_ => 0
 		};
 
 		if irq != 0 {
