@@ -3,8 +3,7 @@ pub struct Clint {
 	msip: u32,
 	mtimecmp: u64,
 	mtime: u64,
-	interrupting: bool,
-	software_interrupting: bool
+	interrupting: bool
 }
 
 impl Clint {
@@ -14,8 +13,7 @@ impl Clint {
 			msip: 0,
 			mtimecmp: 0,
 			mtime: 0,
-			interrupting: false,
-			software_interrupting: false
+			interrupting: false
 		}
 	}
 
@@ -101,9 +99,6 @@ impl Clint {
 		match address {
 			// MSIP register 4 bytes
 			0x02000000 => {
-				if (self.msip & 1) == 0 && (value & 1) == 1 {
-					self.software_interrupting = true;
-				}
 				self.msip = (self.msip & !0xff) | (value as u32);
 			},
 			0x02000001 => {
@@ -151,17 +146,5 @@ impl Clint {
 	pub fn reset_interrupting(&mut self) {
 		self.interrupting = false;
 		self.mtime = 0;
-	}
-
-	pub fn is_software_interrupting(&self) -> bool {
-		self.software_interrupting
-	}
-
-	pub fn reset_software_interrupting(&mut self) {
-		self.software_interrupting = false;
-	}
-
-	pub fn get_msip_lsb(&self) -> u32 {
-		self.msip & 1
 	}
 }

@@ -96,18 +96,11 @@ impl Mmu {
 		let virtio_is_interrupting = self.is_disk_interrupting();
 		let uart_is_interrupting = self.is_uart_interrupting();
 		let timer_is_interrupting = self.is_clint_interrupting();
-		let software_timer_is_interrupting = self.is_clint_software_interrupting();
-		self.plic.update(
+		self.plic.detect_interrupt(
 			virtio_is_interrupting,
 			uart_is_interrupting,
-			timer_is_interrupting,
-			software_timer_is_interrupting
-		);
-		self.plic.get_interrupt()
-	}
-
-	pub fn reset_interrupt(&mut self) {
-		self.plic.reset_interrupt();
+			timer_is_interrupting
+		)
 	}
 
 	pub fn update_addressing_mode(&mut self, new_addressing_mode: AddressingMode) {
@@ -295,8 +288,10 @@ impl Mmu {
 
 	pub fn load_raw(&mut self, address: u64) -> u8 {
 		let effective_address = self.get_effective_address(address);
-		// @TODO: Check valid memory map
+		// @TODO: Map from dtb file
 		match address {
+			// I don't know why but dtb data seems to be stored from 0x1020 on Linux.
+			// It might be from self.x[0xb] initialization?
 			0x00001020..=0x00001ea2 => self.dtb[address as usize - 0x1020],
 			0x02000000..=0x0200ffff => self.clint.load(effective_address),
 			0x0C000000..=0x0fffffff => self.plic.load(effective_address),
@@ -620,6 +615,7 @@ impl Mmu {
 
 		let new_id = self.disk.get_new_id();
 		self.store_halfword_raw(base_used_address.wrapping_add(2), new_id);
+		// I don't know why but the following two lines fail Linux so commenting out for now.
 		//self.store_word_raw(base_used_address.wrapping_add(4).wrapping_add(new_id.wrapping_sub(1) as u64 * 8), index as u32);
 		//self.store_word_raw(base_used_address.wrapping_add(4).wrapping_add(new_id.wrapping_sub(1) as u64 * 8).wrapping_add(4), 3);
 	}
@@ -642,24 +638,8 @@ impl Mmu {
 		self.clint.reset_interrupting();
 	}
 
-	pub fn is_clint_software_interrupting(&self) -> bool {
-		self.clint.is_software_interrupting()
-	}
-
-	pub fn reset_clint_software_interrupting(&mut self) {
-		self.clint.reset_software_interrupting();
-	}
-
-	pub fn get_clint_msip_lsb(&self) -> u32 {
-		self.clint.get_msip_lsb()
-	}
-
 	pub fn is_uart_interrupting(&mut self) -> bool {
 		self.uart.is_interrupting()
-	}
-
-	pub fn reset_uart_interrupting(&mut self) {
-		self.uart.reset_interrupting();
 	}
 
 	// Wasm specific

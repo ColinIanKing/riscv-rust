@@ -47,7 +47,6 @@ impl VirtioBlockDisk {
 	pub fn reset_interrupting(&mut self) {
 		self.interrupting = false;
 		self.notify_clock = 0;
-		//println!("Virtio notify reset");
 	}
 
 	pub fn init(&mut self, contents: Vec<u8>) {
@@ -57,6 +56,11 @@ impl VirtioBlockDisk {
 	}
 
 	pub fn tick(&mut self) {
+		// Disk access should be much slower than CPU. To simulate that rising interrupt
+		// 500 cpu clocks away from the notification for now. Maybe disk access is further
+		// slower in reality but we don't support /request queue yet then
+		// we want to finish the first request before next request comes.
+		// @TODO: Support request queue and rise interrupt slower
 		if self.notify_clock > 0 && self.clock > self.notify_clock + 500 {
 			self.interrupting = true;
 			self.interrupt_status = 1;
@@ -90,20 +94,20 @@ impl VirtioBlockDisk {
 			// Maximum virtual queue size: 8
 			0x10001034 => 8,
 			// Guest physical page number of the virtual queue
-			0x10001040 => (self.queue_pfn & 0xff) as u8,
-			0x10001041 => ((self.queue_pfn >> 8) & 0xff) as u8,
-			0x10001042 => ((self.queue_pfn >> 16) & 0xff) as u8,
-			0x10001043 => ((self.queue_pfn >> 24) & 0xff) as u8,
+			0x10001040 => self.queue_pfn as u8,
+			0x10001041 => (self.queue_pfn >> 8) as u8,
+			0x10001042 => (self.queue_pfn >> 16) as u8,
+			0x10001043 => (self.queue_pfn >> 24) as u8,
 			// Interrupt status
-			0x10001060 => (self.interrupt_status & 0xff) as u8,
-			0x10001061 => ((self.interrupt_status >> 8) & 0xff) as u8,
-			0x10001062 => ((self.interrupt_status >> 16) & 0xff) as u8,
-			0x10001063 => ((self.interrupt_status >> 24) & 0xff) as u8,
+			0x10001060 => self.interrupt_status as u8,
+			0x10001061 => (self.interrupt_status >> 8) as u8,
+			0x10001062 => (self.interrupt_status >> 16) as u8,
+			0x10001063 => (self.interrupt_status >> 24) as u8,
 			// Device status
-			0x10001070 => (self.status & 0xff) as u8,
-			0x10001071 => ((self.status >> 8) & 0xff) as u8,
-			0x10001072 => ((self.status >> 16) & 0xff) as u8,
-			0x10001073 => ((self.status >> 24) & 0xff) as u8,
+			0x10001070 => self.status as u8,
+			0x10001071 => (self.status >> 8) as u8,
+			0x10001072 => (self.status >> 16) as u8,
+			0x10001073 => (self.status >> 24) as u8,
 			// Configurations @TODO: Implement properly
 			0x10001100 => 0x00,
 			0x10001101 => 0x20,
@@ -124,125 +128,123 @@ impl VirtioBlockDisk {
 				self.device_features_sel = (self.device_features_sel & !0xff) | (value as u32);
 			},
 			0x10001015 => {
-				self.device_features_sel = (self.device_features_sel & !0xff00) | ((value as u32) << 8);
+				self.device_features_sel = (self.device_features_sel & !(0xff << 8)) | ((value as u32) << 8);
 			},
 			0x10001016 => {
-				self.device_features_sel = (self.device_features_sel & !0xff0000) | ((value as u32) << 16);			
+				self.device_features_sel = (self.device_features_sel & !(0xff << 16)) | ((value as u32) << 16);			
 			},
 			0x10001017 => {
-				self.device_features_sel = (self.device_features_sel & !0xff000000) | ((value as u32) << 24);
+				self.device_features_sel = (self.device_features_sel & !(0xff << 24)) | ((value as u32) << 24);
 			},
 			0x10001020 => {
 				self.driver_features = (self.driver_features & !0xff) | (value as u32);
 			},
 			0x10001021 => {
-				self.driver_features = (self.driver_features & !0xff00) | ((value as u32) << 8);
+				self.driver_features = (self.driver_features & !(0xff << 8)) | ((value as u32) << 8);
 			},
 			0x10001022 => {
-				self.driver_features = (self.driver_features & !0xff0000) | ((value as u32) << 16);			
+				self.driver_features = (self.driver_features & !(0xff << 16)) | ((value as u32) << 16);			
 			},
 			0x10001023 => {
-				self.driver_features = (self.driver_features & !0xff000000) | ((value as u32) << 24);
+				self.driver_features = (self.driver_features & !(0xff << 24)) | ((value as u32) << 24);
 			},
 			0x10001028 => {
 				self.guest_page_size = (self.guest_page_size & !0xff) | (value as u32);
 			},
 			0x10001029 => {
-				self.guest_page_size = (self.guest_page_size & !0xff00) | ((value as u32) << 8);
+				self.guest_page_size = (self.guest_page_size & !(0xff << 8)) | ((value as u32) << 8);
 			},
 			0x1000102a => {
-				self.guest_page_size = (self.guest_page_size & !0xff0000) | ((value as u32) << 16);			
+				self.guest_page_size = (self.guest_page_size & !(0xff << 16)) | ((value as u32) << 16);			
 			},
 			0x1000102b => {
-				self.guest_page_size = (self.guest_page_size & !0xff000000) | ((value as u32) << 24);
+				self.guest_page_size = (self.guest_page_size & !(0xff << 24)) | ((value as u32) << 24);
 			},
 			0x10001030 => {
 				self.queue_select = (self.queue_select & !0xff) | (value as u32);
 			},
 			0x10001031 => {
-				self.queue_select = (self.queue_select & !0xff00) | ((value as u32) << 8);
+				self.queue_select = (self.queue_select & !(0xff << 8)) | ((value as u32) << 8);
 			},
 			0x10001032 => {
-				self.queue_select = (self.queue_select & !0xff0000) | ((value as u32) << 16);			
+				self.queue_select = (self.queue_select & !(0xff << 16)) | ((value as u32) << 16);			
 			},
 			0x10001033 => {
-				self.queue_select = (self.queue_select & !0xff000000) | ((value as u32) << 24);
+				self.queue_select = (self.queue_select & !(0xff << 24)) | ((value as u32) << 24);
 			},
 			0x10001038 => {
 				self.queue_num = (self.queue_num & !0xff) | (value as u32);
 			},
 			0x10001039 => {
-				self.queue_num = (self.queue_num & !0xff00) | ((value as u32) << 8);
+				self.queue_num = (self.queue_num & !(0xff << 8)) | ((value as u32) << 8);
 			},
 			0x1000103a => {
-				self.queue_num = (self.queue_num & !0xff0000) | ((value as u32) << 16);			
+				self.queue_num = (self.queue_num & !(0xff << 16)) | ((value as u32) << 16);			
 			},
 			0x1000103b => {
-				self.queue_num = (self.queue_num & !0xff000000) | ((value as u32) << 24);
+				self.queue_num = (self.queue_num & !(0xff << 24)) | ((value as u32) << 24);
 			},
 			0x1000103c => {
 				self.queue_align = (self.queue_align & !0xff) | (value as u32);
 			},
 			0x1000103d => {
-				self.queue_align = (self.queue_align & !0xff00) | ((value as u32) << 8);
+				self.queue_align = (self.queue_align & !(0xff << 8)) | ((value as u32) << 8);
 			},
 			0x1000103e => {
-				self.queue_align = (self.queue_align & !0xff0000) | ((value as u32) << 16);			
+				self.queue_align = (self.queue_align & !(0xff << 16)) | ((value as u32) << 16);			
 			},
 			0x1000103f => {
-				self.queue_align = (self.queue_align & !0xff000000) | ((value as u32) << 24);
+				self.queue_align = (self.queue_align & !(0xff << 24)) | ((value as u32) << 24);
 			},
 			0x10001040 => {
 				self.queue_pfn = (self.queue_pfn & !0xff) | (value as u32);
 			},
 			0x10001041 => {
-				self.queue_pfn = (self.queue_pfn & !0xff00) | ((value as u32) << 8);
+				self.queue_pfn = (self.queue_pfn & !(0xff << 8)) | ((value as u32) << 8);
 			},
 			0x10001042 => {
-				self.queue_pfn = (self.queue_pfn & !0xff0000) | ((value as u32) << 16);			
+				self.queue_pfn = (self.queue_pfn & !(0xff << 16)) | ((value as u32) << 16);			
 			},
 			0x10001043 => {
-				self.queue_pfn = (self.queue_pfn & !0xff000000) | ((value as u32) << 24);
+				self.queue_pfn = (self.queue_pfn & !(0xff << 24)) | ((value as u32) << 24);
 			},
+			// @TODO: Queue request support
 			0x10001050 => {
 				self.queue_notify = (self.queue_notify & !0xff) | (value as u32);
 			},
 			0x10001051 => {
-				self.queue_notify = (self.queue_notify & !0xff00) | ((value as u32) << 8);
+				self.queue_notify = (self.queue_notify & !(0xff << 8)) | ((value as u32) << 8);
 			},
 			0x10001052 => {
-				self.queue_notify = (self.queue_notify & !0xff0000) | ((value as u32) << 16);			
+				self.queue_notify = (self.queue_notify & !(0xff << 16)) | ((value as u32) << 16);			
 			},
 			0x10001053 => {
-				self.queue_notify = (self.queue_notify & !0xff000000) | ((value as u32) << 24);
-				if self.notify_clock > 0 {
-					println!("Overlay notify");
-				}
+				self.queue_notify = (self.queue_notify & !(0xff << 24)) | ((value as u32) << 24);
 				self.notify_clock = self.clock;
 			},
 			0x10001060 => {
 				self.interrupt_status = (self.interrupt_status & !0xff) | (value as u32);
 			},
 			0x10001061 => {
-				self.interrupt_status = (self.interrupt_status & !0xff00) | ((value as u32) << 8);
+				self.interrupt_status = (self.interrupt_status & !(0xff << 8)) | ((value as u32) << 8);
 			},
 			0x10001062 => {
-				self.interrupt_status = (self.interrupt_status & !0xff0000) | ((value as u32) << 16);			
+				self.interrupt_status = (self.interrupt_status & !(0xff << 16)) | ((value as u32) << 16);			
 			},
 			0x10001063 => {
-				self.interrupt_status = (self.interrupt_status & !0xff000000) | ((value as u32) << 24);
+				self.interrupt_status = (self.interrupt_status & !(0xff << 24)) | ((value as u32) << 24);
 			},
 			0x10001070 => {
 				self.status = (self.status & !0xff) | (value as u32);
 			},
 			0x10001071 => {
-				self.status = (self.status & !0xff00) | ((value as u32) << 8);
+				self.status = (self.status & !(0xff << 8)) | ((value as u32) << 8);
 			},
 			0x10001072 => {
-				self.status = (self.status & !0xff0000) | ((value as u32) << 16);			
+				self.status = (self.status & !(0xff << 16)) | ((value as u32) << 16);			
 			},
 			0x10001073 => {
-				self.status = (self.status & !0xff000000) | ((value as u32) << 24);
+				self.status = (self.status & !(0xff << 24)) | ((value as u32) << 24);
 			},
 			_ => {}
 		};

@@ -582,7 +582,7 @@ impl Cpu {
 			mmu: Mmu::new(Xlen::Bit64, terminal),
 			dump_flag: false
 		};
-		cpu.x[0xb] = 0x1020; // For Linux boot
+		cpu.x[0xb] = 0x1020; // I don't know why Linux seems to require this initializationboot
 		cpu.write_csr_raw(CSR_SSTATUS_ADDRESS, 0x200000005);
 		cpu.write_csr_raw(CSR_MISA_ADDRESS, 0x80043100);
 		cpu
@@ -651,180 +651,6 @@ impl Cpu {
 		if self.wfi {
 			//return Ok(());
 		}
-		/*
-		if self.pc == 0xffffffff8003f82a {
-			println!("do_idle. Clock:{:X}", self.clock);
-		}
-		if self.pc == 0xffffffff8003f99c {
-			println!("cpu_startup_entry");
-		}
-		if self.pc == 0xffffffff8032f65e {
-			println!("rest_init");
-		}
-		if self.pc == 0xffffffff80331f14 {
-			println!("do_nanosleep");
-		}
-		if self.pc == 0xffffffff80055df0 {
-			println!("hrtimer_nanosleep");
-		}
-		if self.pc == 0xffffffff80331fd8 {
-			println!("hrtimer_nanosleep_restart");
-		}
-		if self.pc == 0xffffffff8005b9d8 {
-			println!("do_cpu_nanosleep");
-		}
-		if self.pc == 0xffffffff8005bb28 {
-			println!("posix_cpu_nsleep");
-		}
-		if self.pc == 0xffffffff8005a284 {
-			println!("common_nsleep");
-		}
-		if self.pc == 0xffffffff8005a2cc {
-			println!("common_nsleep_timens");
-		}
-		if self.pc == 0xffffffff8005b01c {
-			println!("__se_sys_clock_nanosleep");
-		}
-		if self.pc == 0xffffffff80055ea8 {
-			println!("__se_sys_nanosleep. SEPC:{:X}", self.csr[CSR_SEPC_ADDRESS as usize]);
-			self.dump_flag = true;
-		}
-		if self.pc == 0xffffffff802345a2 {
-			println!("riscv_timer_interrupt");
-		}
-		if self.pc == 0xffffffff80126a6c {
-			println!("proc_sys_write");
-		}
-		if self.pc == 0xffffffff800d1c16 {
-			println!("ksys_write");
-			println!("A0:{:X}", self.x[10]);
-			let mut offset = 0;
-			while true {
-				match self.mmu.load(self.x[11] as u64 + offset) {
-					Ok(data) => {
-						match data {
-							0 => break,
-							_ => {
-								let str = vec![data];
-								match str::from_utf8(&str) {
-									Ok(s) => print!("{}", s),
-									Err(_e) => break
-								};
-							}
-						};
-					},
-					Err(_e) => break
-				};
-				offset += 1;
-			}
-			println!();
-		}
-		if self.pc == 0xffffffff801e581a {
-			println!("redirected_tty_write");
-		}
-		if self.pc == 0xffffffff801e549a {
-			println!("tty_write");
-		}
-		if self.pc == 0xffffffff801b1186 {
-			//println!("_copy_from_user");
-		}
-		if self.pc == 0xffffffff801e84d2 {
-			println!("process_echoes");
-		}
-		if self.pc == 0xffffffff801fe736 {
-			println!("uart_write_room");
-		}
-		if self.pc == 0xffffffff80200114 {
-			println!("uart_write");
-		}
-		if self.pc == 0xffffffff802035c8 {
-			println!("serial8250_start_tx");
-		}
-		if self.pc == 0xffffffff80201196 {
-			println!("mem_serial_out");
-		}
-		if self.pc == 0xffffffff802011ac {
-			println!("A1:{:X} A2:{:X}", self.x[11], self.x[12]);
-		}
-		if self.pc == 0xffffffff801fe5d4 {
-			println!("uart_start");
-		}
-		if self.pc == 0xffffffff801fe678 {
-			println!("uart_flush_chars");
-		}
-		if self.pc == 0xffffffff801fda16 {
-			println!("__uart_start.isra.0");
-		}
-		if self.pc == 0xffffffff80203220 {
-			println!("serial8250_tx_chars");
-		}
-		if self.pc == 0xffffffff802019da {
-			println!("serial8250_rx_chars");
-		}
-		if self.pc == 0xffffffff801e4e64 {
-			println!("tty_wakeup");
-		}
-		if self.pc == 0xffffffff801fdcb0 {
-			println!("uart_write_wakeup");
-		}
-		if self.pc == 0xffffffff80201172 {
-			println!("mem_serial_in");
-		}
-		if self.pc == 0xffffffff8020353a {
-			println!("serial8250_default_handle_irq");
-		}
-		if self.pc == 0xffffffff80203488 {
-			println!("serial8250_handle_irq.part.0");
-		}
-		if self.pc == 0xffffffff80201a72{
-			println!("serial8250_modem_status");
-		}
-		if self.pc == 0xffffffff80200284 {
-			println!("serial8250_interrupt");
-		}
-		if self.pc == 0xffffffff8004bb1e {
-			println!("handle_irq_event_percpu");
-		}
-		if self.pc == 0xffffffff801bf62e {
-			println!("Claim:{:X}", self.x[9]);
-		}
-		if self.pc == 0xffffffff802345bc {
-			println!("riscv_timer_interrupt-event_handler A5:{:X}", self.x[15]);
-		}
-		if self.pc == 0xffffffff8005d4dc {
-			println!("tick_handle_periodic");
-		}
-		if self.pc == 0xffffffff802344f0 {
-			println!("riscv_clock_next_event");
-		}
-		if self.pc == 0xffffffff80234518 {
-			//println!("riscv_clocksource_rdtime");
-		}
-		if self.pc == 0xffffffff80234538 {
-			println!("riscv_timer_dying_cpu");
-		}
-		if self.pc == 0xffffffff8023454e {
-			println!("riscv_timer_starting_cpu");
-		}
-		if self.pc == 0xffffffff800554be {
-			println!("update_process_times");
-		}
-		if self.pc == 0xffffffff8005d17c {
-			println!("clockevents_program_event");
-		}
-		if self.pc == 0xffffffff80055492 {
-			println!("run_local_timers");
-		}
-		if self.pc == 0xffffffff80054c88 {
-			println!("run_timer_softirq");
-		}
-		if self.pc == 0xffffffff802036da {
-			//self.pc = 0xffffffff802036dc
-		}
-		if self.clock >= 0x36596128 {
-			self.dump_current_instruction_to_terminal();
-		}
-		*/
 		let word = match self.fetch() {
 			Ok(word) => word,
 			Err(e) => return Err(e)
@@ -853,7 +679,6 @@ impl Cpu {
 	}
 
 	fn handle_interrupt(&mut self, instruction_address: u64) {
-		self.write_csr_raw(CSR_SIP_ADDRESS, (self.csr[CSR_SIP_ADDRESS as usize] & !0x2) | ((self.mmu.get_clint_msip_lsb() as u64) << 1));
 		match self.mmu.detect_interrupt() {
 			InterruptType::KeyInput => {
 				match self.handle_trap(Trap {
@@ -861,8 +686,6 @@ impl Cpu {
 					value: self.pc // dummy
 				}, instruction_address, true) {
 					true => {
-						self.mmu.reset_uart_interrupting();
-						self.mmu.reset_interrupt();
 						self.wfi = false;
 					},
 					false => {}
@@ -875,26 +698,10 @@ impl Cpu {
 				}, instruction_address, true) {
 					true => {
 						self.mmu.reset_clint_interrupting();
-						self.mmu.reset_interrupt();
 						self.wfi = false;
 					},
 					false => {}
 				};
-			},
-			InterruptType::TimerSoftware => {
-				/*
-				match self.handle_trap(Trap {
-					trap_type: TrapType::SupervisorSoftwareInterrupt,
-					value: self.pc // dummy
-				}, instruction_address, true) {
-					true => {
-						self.mmu.reset_clint_software_interrupting();
-						self.mmu.reset_interrupt();
-						self.wfi = false;
-					},
-					false => {}
-				};
-				*/
 			},
 			InterruptType::Virtio => {
 				match self.handle_trap(Trap {
@@ -904,7 +711,6 @@ impl Cpu {
 					true => {
 						self.mmu.handle_disk_access();
 						self.mmu.reset_disk_interrupting();
-						self.mmu.reset_interrupt();
 						self.wfi = false;
 					},
 					false => {}

@@ -3,17 +3,18 @@ pub enum InterruptType {
 	None,
 	KeyInput,
 	Timer,
-	TimerSoftware,
 	Virtio
 }
+
+// Based on SiFive Interrupt Cookbook
+// https://sifive.cdn.prismic.io/sifive/0d163928-2128-42be-a75a-464df65e04e0_sifive-interrupt-cookbook.pdf
 
 pub struct Plic {
 	clock: u64,
 	irq: u32,
 	enabled: u64,
 	threshold: u32,
-	priorities: [u32; 1024],
-	interrupt: InterruptType
+	priorities: [u32; 1024]
 }
 
 impl Plic {
@@ -23,8 +24,7 @@ impl Plic {
 			irq: 0,
 			enabled: 0,
 			threshold: 0,
-			priorities: [0; 1024],
-			interrupt: InterruptType::None
+			priorities: [0; 1024]
 		}
 	}
 
@@ -32,21 +32,16 @@ impl Plic {
 		self.clock = self.clock.wrapping_add(1);
 	}
 
-	pub fn update(&mut self,
+	pub fn detect_interrupt(&mut self,
 		virtio_is_interrupting: bool,
 		uart_is_interrupting: bool,
-		timer_is_interrupting: bool,
-		software_timer_is_interrupting: bool) {
+		timer_is_interrupting: bool) -> InterruptType {
 
-		let virtio_interrupt_id = 1;
-		let uart_interrupt_id = 2;
-		let timer_interrupt_id = 3;
-		let timer_software_interrupt_id = 4;
-
+		// @TODO: IRQ num should be configurable with dtb
 		let virtio_irq = 1;
 		let uart_irq = 10;
 
-		// First detect external interrupts
+		// Which should be prioritized, local interrupts or global interrupts?
 
 		let virtio_priority = self.priorities[virtio_irq as usize];
 		let uart_priority = self.priorities[uart_irq as usize];
@@ -58,42 +53,39 @@ impl Plic {
 		let enables = [virtio_enabled, uart_enabled];
 		let priorities = [virtio_priority, uart_priority];
 
-		let mut interrupt = 0;
+		let mut interrupt_id = 0; // 1: Virtio, 2: UART, 3: Timer
 		let mut priority = 0;
 		for i in 0..2 {
 			if interruptings[i] && enables[i] {
-				if interrupt == 0 || (priorities[i] > priority) {
-					interrupt = i + 1;
+				if interrupt_id == 0 || (priorities[i] > priority) {
+					interrupt_id = i + 1;
 					priority = priorities[i];
 				}
 			}
 		}
 
-		if interrupt != 0 {
+		if interrupt_id != 0 {
 			if priority <= self.threshold {
-				interrupt = 0;
+				interrupt_id = 0;
 			}
 		}
 
 		// Second, detect local interrupts if no external interrupts
 
-		if interrupt == 0 {
+		if interrupt_id == 0 {
 			if timer_is_interrupting {
-				interrupt = 3;
-			} else if software_timer_is_interrupting {
-				interrupt = 4;
+				interrupt_id = 3;
 			}
 		}
 
-		self.interrupt = match interrupt {
+		let interrupt = match interrupt_id {
 			1 => InterruptType::Virtio,
 			2 => InterruptType::KeyInput,
 			3 => InterruptType::Timer,
-			4 => InterruptType::TimerSoftware,
 			_ => InterruptType::None
 		};
 
-		let irq = match self.interrupt {
+		let irq = match interrupt {
 			InterruptType::Virtio => virtio_irq,
 			InterruptType::KeyInput => uart_irq,
 			_ => 0
@@ -103,14 +95,8 @@ impl Plic {
 			self.irq = irq;
 			//println!("IRQ: {:X}", self.irq);
 		}
-	}
 
-	pub fn reset_interrupt(&mut self) {
-		self.interrupt = InterruptType::None;
-	}
-
-	pub fn get_interrupt(&self) -> InterruptType {
-		self.interrupt.clone()
+		interrupt
 	}
 
 	pub fn load(&self, address: u64) -> u8 {

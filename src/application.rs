@@ -48,6 +48,8 @@ impl Application {
 		loop {
 			//self.cpu.dump_current_instruction_to_terminal();
 			self.tick();
+			// Linux specific logics
+			// @TODO: Do only if tohost section is specified
 			let fromhost = self.cpu.load_doubleword_raw(0x80008000);
 			let tohost = self.cpu.load_doubleword_raw(0x80008008);
 			if tohost != 0 {
