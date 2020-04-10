@@ -38,6 +38,11 @@ impl Uart {
 				self.lsr |= 0x01;
 			}
 		}
+		if (self.clock % 0x10) == 0 && self.thr != 0 {
+			self.terminal.put_byte(self.thr);
+			self.thr = 0;
+			self.lsr |= 0x20;
+		}
 	}
 
 	pub fn is_interrupting(&mut self) -> bool {
@@ -88,8 +93,8 @@ impl Uart {
 			// Transfer Holding Register
 			0x10000000 => match (self.lcr >> 7) == 0 {
 				true => {
-					self.terminal.put_byte(value);
-					self.lsr |= 0x20;
+					self.thr = value;
+					self.lsr &= !0x20;
 				},
 				false => {} // @TODO: Implement properly
 			},
