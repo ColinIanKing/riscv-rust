@@ -31,7 +31,7 @@ impl Uart {
 
 	pub fn tick(&mut self) {
 		self.clock = self.clock.wrapping_add(1);
-		if (self.clock % 0x384000) == 0 && self.rbr == 0 { // @TODO: Fix me
+		if (self.clock % 0x38400) == 0 && self.rbr == 0 { // @TODO: Fix me
 			let value = self.terminal.get_input();
 			if value != 0 {
 				self.rbr = value;
