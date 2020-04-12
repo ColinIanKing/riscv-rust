@@ -1,3 +1,6 @@
+// Based on Virtual I/O Device (VIRTIO) Version 1.1
+// https://docs.oasis-open.org/virtio/virtio/v1.1/csprd01/virtio-v1.1-csprd01.html
+
 pub struct VirtioBlockDisk {
 	id: u16,
 	clock: u64,
@@ -13,7 +16,6 @@ pub struct VirtioBlockDisk {
 	status: u32,
 	interrupt_status: u32,
 	notify_clock: u64,
-	interrupting: bool,
 	contents: Vec<u8>
 }
 
@@ -34,19 +36,12 @@ impl VirtioBlockDisk {
 			status: 0,
 			interrupt_status: 0,
 			notify_clock: 0,
-			interrupting: false,
 			contents: vec![]
 		}
 	}
 
 	pub fn is_interrupting(&mut self) -> bool {
-		self.interrupting
-	}
-
-	// @TODO: Rename
-	pub fn reset_interrupting(&mut self) {
-		self.interrupting = false;
-		self.notify_clock = 0;
+		(self.interrupt_status & 0x1) == 1
 	}
 
 	pub fn init(&mut self, contents: Vec<u8>) {
@@ -62,11 +57,16 @@ impl VirtioBlockDisk {
 		// we want to finish the first request before next request comes.
 		// @TODO: Support request queue and rise interrupt slower
 		if self.notify_clock > 0 && self.clock > self.notify_clock + 500 {
-			self.interrupting = true;
-			self.interrupt_status = 1;
+			// bit 0 in interrupt_status register indicates
+			// the interrupt was asserted because the device has used a buffer
+			// in at least one of the active virtual queues.
+			self.interrupt_status |= 0x1;
 		}
 		self.clock = self.clock.wrapping_add(1);
 	}
+
+	// Load/Store registers.
+	// From 4.2.4 Legacy interface in the specification
 
 	pub fn load(&mut self, address: u64) -> u8 {
 		//println!("Disk Load AD:{:X}", address);
@@ -77,9 +77,9 @@ impl VirtioBlockDisk {
 			0x10001001 => 0x69,
 			0x10001002 => 0x72,
 			0x10001003 => 0x74,
-			// Device version: 1
+			// Device version: 1 (Legacy device)
 			0x10001004 => 1,
-			// Virtio Subsystem Device id: 2
+			// Virtio Subsystem Device id: 2 (Block device)
 			0x10001008 => 2,
 			// Virtio Subsystem Vendor id: 0x554d4551
 			0x1000100c => 0x51,
@@ -233,6 +233,13 @@ impl VirtioBlockDisk {
 			},
 			0x10001063 => {
 				self.interrupt_status = (self.interrupt_status & !(0xff << 24)) | ((value as u32) << 24);
+			},
+			0x10001064 => {
+				// interrupt ack
+				if (value & 0x1) == 1 {
+					self.interrupt_status &= !0x1;
+					self.notify_clock = 0;
+				}
 			},
 			0x10001070 => {
 				self.status = (self.status & !0xff) | (value as u32);

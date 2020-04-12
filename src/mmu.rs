@@ -626,10 +626,6 @@ impl Mmu {
 		self.disk.is_interrupting()
 	}
 
-	pub fn reset_disk_interrupting(&mut self) {
-		self.disk.reset_interrupting();
-	}
-
 	pub fn is_clint_interrupting(&self) -> bool {
 		self.clint.is_interrupting()
 	}

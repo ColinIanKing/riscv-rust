@@ -710,7 +710,6 @@ impl Cpu {
 				}, instruction_address, true) {
 					true => {
 						self.mmu.handle_disk_access();
-						self.mmu.reset_disk_interrupting();
 						self.wfi = false;
 					},
 					false => {}
